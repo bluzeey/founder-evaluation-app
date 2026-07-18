@@ -1,7 +1,7 @@
 import uuid
-from typing import Any, List
+from typing import Any, List, Optional
 
-from models import Dimension, EvidenceItem, EvidenceStatus, EvidenceType, Founder
+from models import Dimension, EvidenceItem, EvidenceStatus, EvidenceType, Founder, SocialFootprint, SocialMediaBackground
 
 _DIMENSION_MAP = {d.value: d for d in Dimension}
 _EVIDENCE_TYPE_MAP = {e.value: e for e in EvidenceType}
@@ -59,4 +59,42 @@ def create_founder_from_research(
         github_url=profile.get("github_url"),
         ai_research_summary=summary or None,
         ai_research_sources=sources or [],
+    )
+
+
+def create_social_background(
+    founder_id: str,
+    result: dict[str, Any],
+    linkedin_url: Optional[str] = None,
+    github_url: Optional[str] = None,
+    status: str = "completed",
+) -> SocialMediaBackground:
+    """Create a SocialMediaBackground record from the LLM research result."""
+    background_id = f"soc_{uuid.uuid4().hex[:8]}"
+
+    raw_footprints = result.get("footprints", []) or []
+    footprints = []
+    for fp in raw_footprints:
+        footprints.append(
+            SocialFootprint(
+                platform=fp.get("platform", "unknown"),
+                url=fp.get("url", ""),
+                snippet=fp.get("snippet"),
+                source_trust=_clamp(float(fp.get("source_trust", 0.5) or 0.5)),
+            )
+        )
+
+    evidence_data = result.get("evidence", []) or []
+    evidence_items = [evidence_from_llm(founder_id, item) for item in evidence_data]
+
+    return SocialMediaBackground(
+        id=background_id,
+        founder_id=founder_id,
+        status=status,
+        linkedin_url=linkedin_url,
+        github_url=github_url,
+        summary=result.get("summary"),
+        footprints=footprints,
+        evidence_items=evidence_items,
+        error_message=result.get("error_message"),
     )

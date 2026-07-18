@@ -1,16 +1,20 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Plus, AlertCircle } from "lucide-react";
+import { Plus, AlertCircle, Sparkles, Loader2, UserPlus, X, ExternalLink } from "lucide-react";
 import { api } from "@/lib/api";
-import type { Founder } from "@/types";
+import type { Founder, FounderPoolItem } from "@/types";
 
 export default function Dashboard() {
   const [founders, setFounders] = useState<Founder[]>([]);
+  const [pool, setPool] = useState<FounderPoolItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [poolLoading, setPoolLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [seeded, setSeeded] = useState(false);
 
   useEffect(() => {
     load();
+    loadPool();
   }, []);
 
   async function load() {
@@ -23,10 +27,41 @@ export default function Dashboard() {
     }
   }
 
+  async function loadPool() {
+    setPoolLoading(true);
+    try {
+      const data = await api.listFounderPool("recommended");
+      setPool(data);
+    } finally {
+      setPoolLoading(false);
+    }
+  }
+
   async function seedDemo() {
     await api.seed();
     setSeeded(true);
     await load();
+  }
+
+  async function refreshPool() {
+    setRefreshing(true);
+    try {
+      await api.refreshFounderPool();
+      // Poll briefly for the eager/demo result.
+      setTimeout(loadPool, 1500);
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  async function approveItem(item: FounderPoolItem) {
+    await api.approvePoolItem(item.id);
+    await Promise.all([loadPool(), load()]);
+  }
+
+  async function dismissItem(item: FounderPoolItem) {
+    await api.dismissPoolItem(item.id);
+    await loadPool();
   }
 
   return (
@@ -54,6 +89,101 @@ export default function Dashboard() {
           <AlertCircle size={16} /> Demo seeded. A low-data founder profile is ready for assessment.
         </div>
       )}
+
+      <div className="panel">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-ink">AI-sourced founder pool</h2>
+            <p className="text-xs text-slate-500">
+              The sourcing agent discovers interesting founders matching your thesis.
+            </p>
+          </div>
+          <button
+            onClick={refreshPool}
+            disabled={refreshing}
+            className="flex items-center gap-2 rounded-lg bg-action px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {refreshing ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+            {refreshing ? "Finding…" : "Find more founders"}
+          </button>
+        </div>
+
+        {poolLoading ? (
+          <div className="py-8 text-center text-sm text-slate-500">Loading recommendations…</div>
+        ) : pool.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-slate-300 py-8 text-center text-sm text-slate-500">
+            No recommendations yet. Click “Find more founders” to run the AI sourcing agent.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {pool.map((item) => (
+              <div
+                key={item.id}
+                className="flex flex-col rounded-lg border border-slate-200 bg-slate-50 p-4"
+              >
+                <div className="mb-2 flex items-start justify-between">
+                  <div>
+                    <h3 className="font-semibold text-ink">{item.name}</h3>
+                    <p className="text-xs text-slate-600">
+                      {item.role} · {item.current_company || "—"}
+                    </p>
+                    {item.location && <p className="text-xs text-slate-500">{item.location}</p>}
+                  </div>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => approveItem(item)}
+                      className="rounded-md p-1.5 text-green-600 hover:bg-green-100"
+                      title="Add to pipeline"
+                    >
+                      <UserPlus size={16} />
+                    </button>
+                    <button
+                      onClick={() => dismissItem(item)}
+                      className="rounded-md p-1.5 text-slate-500 hover:bg-slate-200"
+                      title="Dismiss"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                </div>
+                <p className="mb-3 flex-1 text-sm text-slate-700">{item.reason}</p>
+                <div className="flex flex-wrap gap-2">
+                  {item.source_url && (
+                    <a
+                      href={item.source_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-1 text-xs text-blue-600 hover:underline"
+                    >
+                      <ExternalLink size={12} /> Source
+                    </a>
+                  )}
+                  {item.linkedin_url && (
+                    <a
+                      href={item.linkedin_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs text-blue-600 hover:underline"
+                    >
+                      LinkedIn
+                    </a>
+                  )}
+                  {item.github_url && (
+                    <a
+                      href={item.github_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs text-slate-700 hover:underline"
+                    >
+                      GitHub
+                    </a>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {loading ? (
         <div className="panel py-12 text-center text-slate-500">Loading opportunities…</div>

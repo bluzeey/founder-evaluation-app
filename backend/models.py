@@ -175,6 +175,50 @@ class Claim(BaseModel):
     next_action: Optional[str] = None
 
 
+class SocialFootprint(BaseModel):
+    platform: str
+    url: str
+    snippet: Optional[str] = None
+    source_trust: float = Field(0.5, ge=0.0, le=1.0)
+
+
+class SocialMediaBackground(BaseModel):
+    id: str
+    founder_id: str
+    status: str = "pending"  # pending | running | completed | failed
+    linkedin_url: Optional[str] = None
+    github_url: Optional[str] = None
+    summary: Optional[str] = None
+    footprints: List[SocialFootprint] = []
+    evidence_items: List[EvidenceItem] = []
+    score_snapshot: Optional[ScoreSnapshot] = None
+    error_message: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class PoolItemStatus(str, Enum):
+    RECOMMENDED = "recommended"
+    APPROVED = "approved"
+    DISMISSED = "dismissed"
+
+
+class FounderPoolItem(BaseModel):
+    id: str
+    name: str
+    email: Optional[str] = None
+    current_company: Optional[str] = None
+    role: Optional[str] = None
+    location: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    github_url: Optional[str] = None
+    source_url: Optional[str] = None
+    reason: str
+    thesis_id: Optional[str] = None
+    status: PoolItemStatus = PoolItemStatus.RECOMMENDED
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class AssessmentModule(str, Enum):
     PROBLEM_FRAMING = "problem_framing"
     SALES_OBJECTION = "sales_objection"
@@ -234,6 +278,7 @@ class Founder(BaseModel):
     github_url: Optional[str] = None
     ai_research_summary: Optional[str] = None
     ai_research_sources: List[str] = []
+    social_background_id: Optional[str] = None
     latest_score_snapshot: Optional[ScoreSnapshot] = None
 
 

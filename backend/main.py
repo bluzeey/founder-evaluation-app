@@ -22,9 +22,22 @@ from models import (
     AssessmentModule,
     GraderOutput,
     Decision,
+    SocialMediaBackground,
+    FounderPoolItem,
+    PoolItemStatus,
 )
 from scoring import calculate_founder_score
 from research import UmansClient, create_founder_from_research, evidence_from_llm
+from tasks.social_research import (
+    research_social_background,
+    load_social_background,
+    store_social_background,
+)
+from tasks.founder_pool import (
+    refresh_pool_task,
+    load_founder_pool,
+    save_founder_pool,
+)
 
 app = FastAPI(title="FounderOS API", version="0.1.0")
 
@@ -51,6 +64,9 @@ class CreateFounderRequest(BaseModel):
     current_company: Optional[str] = None
     role: Optional[str] = None
     location: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    github_url: Optional[str] = None
+    auto_score: bool = True
 
 
 class CreateThesisRequest(BaseModel):
@@ -95,10 +111,153 @@ def create_founder(req: CreateFounderRequest):
         current_company=req.current_company,
         role=req.role,
         location=req.location,
+        linkedin_url=req.linkedin_url,
+        github_url=req.github_url,
     )
     FOUNDERS[founder_id] = founder
     EVIDENCE[founder_id] = []
+
+    # Auto-trigger social background research via Celery.
+    background_id = f"soc_{uuid.uuid4().hex[:8]}"
+    founder.social_background_id = background_id
+    pending = SocialMediaBackground(
+        id=background_id,
+        founder_id=founder_id,
+        status="pending",
+        linkedin_url=req.linkedin_url,
+        github_url=req.github_url,
+    )
+    store_social_background(pending)
+    research_social_background.delay(
+        founder_id=founder_id,
+        name=req.name,
+        email=req.email,
+        linkedin_url=req.linkedin_url,
+        github_url=req.github_url,
+        auto_score=req.auto_score,
+    )
     return founder
+
+
+def _apply_social_background(founder_id: str) -> Optional[SocialMediaBackground]:
+    """Reconcile a completed social background result from Redis into memory."""
+    background = load_social_background(founder_id)
+    if not background:
+        return None
+
+    founder = FOUNDERS.get(founder_id)
+    if not founder:
+        return background
+
+    founder.social_background_id = background.id
+
+    if background.status == "completed" and background.evidence_items:
+        existing_ids = {item.id for item in EVIDENCE.get(founder_id, [])}
+        new_items = [
+            item for item in background.evidence_items if item.id not in existing_ids
+        ]
+        if new_items:
+            existing = EVIDENCE.get(founder_id, [])
+            existing.extend(new_items)
+            EVIDENCE[founder_id] = existing
+            snapshot = calculate_founder_score(
+                founder_id, existing, founder.latest_score_snapshot
+            )
+            founder.latest_score_snapshot = snapshot
+
+    return background
+
+
+@app.get("/v1/founders/pool", response_model=List[FounderPoolItem])
+def list_founder_pool(status: Optional[str] = None):
+    """List AI-sourced founder pool recommendations."""
+    pool = load_founder_pool()
+    if status:
+        try:
+            target = PoolItemStatus(status)
+            pool = [item for item in pool if item.status == target]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid status")
+    return pool
+
+
+@app.post("/v1/founders/pool/refresh")
+def refresh_founder_pool_endpoint(thesis_id: Optional[str] = None):
+    """Manually trigger the AI sourcing agent to discover new founders."""
+    thesis = THESES.get(thesis_id) if thesis_id else None
+    if thesis_id and not thesis:
+        raise HTTPException(status_code=404, detail="Thesis not found")
+
+    task = refresh_pool_task.delay(
+        sectors=thesis.sectors if thesis else None,
+        stages=thesis.stages if thesis else None,
+        geographies=thesis.geographies if thesis else None,
+        risk_appetite=thesis.risk_appetite if thesis else "moderate",
+        thesis_id=thesis_id,
+    )
+    return {"task_id": task.id, "status": "queued"}
+
+
+@app.post("/v1/founders/pool/{item_id}/approve", response_model=Founder)
+def approve_pool_item(item_id: str):
+    """Approve a pool recommendation and create a Founder record."""
+    pool = load_founder_pool()
+    item = next((p for p in pool if p.id == item_id), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="Pool item not found")
+    if item.status != PoolItemStatus.RECOMMENDED:
+        raise HTTPException(status_code=400, detail="Pool item is not recommended")
+
+    founder_id = f"fnd_{uuid.uuid4().hex[:8]}"
+    founder = Founder(
+        id=founder_id,
+        name=item.name,
+        email=item.email or f"{item.name.lower().replace(' ', '.')}@example.com",
+        current_company=item.current_company,
+        role=item.role,
+        location=item.location,
+        linkedin_url=item.linkedin_url,
+        github_url=item.github_url,
+    )
+    FOUNDERS[founder_id] = founder
+    EVIDENCE[founder_id] = []
+
+    # Auto-trigger social background research.
+    background_id = f"soc_{uuid.uuid4().hex[:8]}"
+    founder.social_background_id = background_id
+    pending = SocialMediaBackground(
+        id=background_id,
+        founder_id=founder_id,
+        status="pending",
+        linkedin_url=item.linkedin_url,
+        github_url=item.github_url,
+    )
+    store_social_background(pending)
+    research_social_background.delay(
+        founder_id=founder_id,
+        name=founder.name,
+        email=founder.email,
+        linkedin_url=item.linkedin_url,
+        github_url=item.github_url,
+        auto_score=True,
+    )
+
+    item.status = PoolItemStatus.APPROVED
+    save_founder_pool(pool)
+    return founder
+
+
+@app.post("/v1/founders/pool/{item_id}/dismiss")
+def dismiss_pool_item(item_id: str):
+    """Dismiss a pool recommendation."""
+    pool = load_founder_pool()
+    item = next((p for p in pool if p.id == item_id), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="Pool item not found")
+    item.status = PoolItemStatus.DISMISSED
+    save_founder_pool(pool)
+    return {"id": item_id, "status": PoolItemStatus.DISMISSED.value}
+
 
 
 @app.post("/v1/founders/research", response_model=Founder)
@@ -136,7 +295,52 @@ def research_founder(req: ResearchFounderRequest):
 def get_founder(founder_id: str):
     if founder_id not in FOUNDERS:
         raise HTTPException(status_code=404, detail="Founder not found")
+    _apply_social_background(founder_id)
     return FOUNDERS[founder_id]
+
+
+@app.post("/v1/founders/{founder_id}/research-social")
+def research_social(founder_id: str):
+    """Manually re-run social background research for a founder."""
+    if founder_id not in FOUNDERS:
+        raise HTTPException(status_code=404, detail="Founder not found")
+
+    founder = FOUNDERS[founder_id]
+    background_id = f"soc_{uuid.uuid4().hex[:8]}"
+    founder.social_background_id = background_id
+    pending = SocialMediaBackground(
+        id=background_id,
+        founder_id=founder_id,
+        status="pending",
+        linkedin_url=founder.linkedin_url,
+        github_url=founder.github_url,
+    )
+    store_social_background(pending)
+    task = research_social_background.delay(
+        founder_id=founder_id,
+        name=founder.name,
+        email=founder.email,
+        linkedin_url=founder.linkedin_url,
+        github_url=founder.github_url,
+        auto_score=True,
+    )
+    return {
+        "founder_id": founder_id,
+        "background_id": background_id,
+        "task_id": task.id,
+        "status": "pending",
+    }
+
+
+@app.get("/v1/founders/{founder_id}/social-background", response_model=SocialMediaBackground)
+def get_social_background(founder_id: str):
+    """Get the latest social background research result for a founder."""
+    if founder_id not in FOUNDERS:
+        raise HTTPException(status_code=404, detail="Founder not found")
+    background = _apply_social_background(founder_id)
+    if not background:
+        raise HTTPException(status_code=404, detail="Social background not found")
+    return background
 
 
 @app.post("/v1/founders/{founder_id}/evidence", response_model=ScoreSnapshot)

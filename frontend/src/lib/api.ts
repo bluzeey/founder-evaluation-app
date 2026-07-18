@@ -1,4 +1,4 @@
-import type { Founder, Thesis, ScoreSnapshot, OpportunityScreen, Claim, AssessmentPlan, AssessmentModule, ResearchFounderRequest } from "@/types";
+import type { Founder, Thesis, ScoreSnapshot, OpportunityScreen, Claim, AssessmentPlan, AssessmentModule, ResearchFounderRequest, SocialMediaBackground, FounderPoolItem } from "@/types";
 
 const API_BASE = import.meta.env.VITE_API_URL || "/api";
 
@@ -32,4 +32,23 @@ export const api = {
   createThesis: (body: unknown) => fetcher<Thesis>("/v1/theses", { method: "POST", body: JSON.stringify(body) }),
   researchFounder: (body: ResearchFounderRequest) =>
     fetcher<Founder>("/v1/founders/research", { method: "POST", body: JSON.stringify(body) }),
+  createFounder: (body: unknown) => fetcher<Founder>("/v1/founders", { method: "POST", body: JSON.stringify(body) }),
+  researchSocial: (founderId: string) =>
+    fetcher<{ founder_id: string; background_id: string; task_id: string; status: string }>(
+      `/v1/founders/${founderId}/research-social`,
+      { method: "POST" }
+    ),
+  getSocialBackground: (founderId: string) =>
+    fetcher<SocialMediaBackground>(`/v1/founders/${founderId}/social-background`),
+  listFounderPool: (status?: string) =>
+    fetcher<FounderPoolItem[]>(`/v1/founders/pool${status ? `?status=${status}` : ""}`),
+  refreshFounderPool: (thesisId?: string) =>
+    fetcher<{ task_id: string; status: string }>(
+      `/v1/founders/pool/refresh${thesisId ? `?thesis_id=${thesisId}` : ""}`,
+      { method: "POST" }
+    ),
+  approvePoolItem: (itemId: string) =>
+    fetcher<Founder>(`/v1/founders/pool/${itemId}/approve`, { method: "POST" }),
+  dismissPoolItem: (itemId: string) =>
+    fetcher<{ id: string; status: string }>(`/v1/founders/pool/${itemId}/dismiss`, { method: "POST" }),
 };

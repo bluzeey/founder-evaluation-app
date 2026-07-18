@@ -55,6 +55,28 @@ export interface EvidenceItem {
   created_at: string;
 }
 
+export interface SocialFootprint {
+  platform: string;
+  url: string;
+  snippet?: string;
+  source_trust: number;
+}
+
+export interface SocialMediaBackground {
+  id: string;
+  founder_id: string;
+  status: "pending" | "running" | "completed" | "failed";
+  linkedin_url?: string;
+  github_url?: string;
+  summary?: string;
+  footprints: SocialFootprint[];
+  evidence_items: EvidenceItem[];
+  score_snapshot?: ScoreSnapshot;
+  error_message?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Founder {
   id: string;
   name: string;
@@ -66,6 +88,7 @@ export interface Founder {
   github_url?: string;
   ai_research_summary?: string;
   ai_research_sources?: string[];
+  social_background_id?: string;
   latest_score_snapshot?: ScoreSnapshot;
 }
 
@@ -106,6 +129,22 @@ export interface OpportunityScreen {
   idea_vs_market_posture: string;
   idea_vs_market_confidence: number;
   next_founder_action?: string;
+}
+
+export interface FounderPoolItem {
+  id: string;
+  name: string;
+  email?: string;
+  current_company?: string;
+  role?: string;
+  location?: string;
+  linkedin_url?: string;
+  github_url?: string;
+  source_url?: string;
+  reason: string;
+  thesis_id?: string;
+  status: "recommended" | "approved" | "dismissed";
+  created_at: string;
 }
 
 export interface Claim {

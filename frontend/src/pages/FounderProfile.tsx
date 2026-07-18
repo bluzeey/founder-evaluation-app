@@ -1,27 +1,45 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { AlertTriangle, HelpCircle, ClipboardCheck } from "lucide-react";
+import { AlertTriangle, HelpCircle, ClipboardCheck, Linkedin, Github, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api";
 import ScoreCapsule from "@/components/ScoreCapsule";
 import DimensionRow from "@/components/DimensionRow";
-import type { Founder, ScoreSnapshot } from "@/types";
+import type { Founder, ScoreSnapshot, SocialMediaBackground } from "@/types";
 
 export default function FounderProfile() {
   const { founderId } = useParams<{ founderId: string }>();
   const [founder, setFounder] = useState<Founder | null>(null);
   const [snapshot, setSnapshot] = useState<ScoreSnapshot | null>(null);
+  const [socialBg, setSocialBg] = useState<SocialMediaBackground | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const loadAll = async () => {
     if (!founderId) return;
-    (async () => {
-      setLoading(true);
-      const [f, s] = await Promise.all([api.getFounder(founderId), api.getScore(founderId)]);
+    setLoading(true);
+    try {
+      const [f, s, bg] = await Promise.all([
+        api.getFounder(founderId),
+        api.getScore(founderId),
+        api.getSocialBackground(founderId).catch(() => null),
+      ]);
       setFounder(f);
       setSnapshot(s);
+      setSocialBg(bg);
+    } finally {
       setLoading(false);
-    })();
+    }
+  };
+
+  useEffect(() => {
+    loadAll();
   }, [founderId]);
+
+  const handleRerunSocial = async () => {
+    if (!founderId) return;
+    setSocialBg((prev) => (prev ? { ...prev, status: "pending" } : prev));
+    await api.researchSocial(founderId);
+    setTimeout(loadAll, 2000);
+  };
 
   if (loading) return <div className="panel py-12 text-center">Loading profile…</div>;
   if (!founder || !snapshot) return <div className="panel py-12 text-center">Founder not found.</div>;
@@ -53,6 +71,94 @@ export default function FounderProfile() {
           </Link>
         </div>
       </div>
+
+      {socialBg && (
+        <div className="panel">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-ink">Social background</h3>
+            <div className="flex items-center gap-2">
+              <span
+                className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                  socialBg.status === "completed"
+                    ? "bg-green-100 text-green-700"
+                    : socialBg.status === "failed"
+                    ? "bg-red-100 text-red-700"
+                    : "bg-amber-100 text-amber-700"
+                }`}
+              >
+                {socialBg.status}
+              </span>
+              <button
+                onClick={handleRerunSocial}
+                className="flex items-center gap-1 rounded-md p-1 text-slate-500 hover:bg-slate-100"
+                title="Re-run social research"
+              >
+                <RefreshCw size={14} />
+              </button>
+            </div>
+          </div>
+
+          <div className="mb-3 flex flex-wrap gap-3 text-sm">
+            {founder?.linkedin_url && (
+              <a
+                href={founder.linkedin_url}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1.5 text-blue-600 hover:underline"
+              >
+                <Linkedin size={14} /> LinkedIn
+              </a>
+            )}
+            {founder?.github_url && (
+              <a
+                href={founder.github_url}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1.5 text-slate-700 hover:underline"
+              >
+                <Github size={14} /> GitHub
+              </a>
+            )}
+          </div>
+
+          {socialBg.error_message && (
+            <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              {socialBg.error_message}
+            </div>
+          )}
+
+          {socialBg.summary && (
+            <div className="mb-4">
+              <p className="text-sm leading-relaxed text-slate-700">{socialBg.summary}</p>
+            </div>
+          )}
+
+          {socialBg.footprints.length > 0 && (
+            <div>
+              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Footprints
+              </h4>
+              <ul className="space-y-2">
+                {socialBg.footprints.map((fp, i) => (
+                  <li key={i} className="text-sm">
+                    <a
+                      href={fp.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-medium text-blue-600 hover:underline"
+                    >
+                      {fp.platform}
+                    </a>
+                    {fp.snippet && (
+                      <p className="mt-0.5 text-slate-600 line-clamp-2">{fp.snippet}</p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-1">

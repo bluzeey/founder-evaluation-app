@@ -9,6 +9,8 @@ export default function ApplicationNew() {
     company: "",
     name: "",
     email: "",
+    linkedin_url: "",
+    github_url: "",
   });
   const [researching, setResearching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -26,16 +28,13 @@ export default function ApplicationNew() {
     setResearching(true);
     setError(null);
     try {
-      const query = [form.name, form.company].filter(Boolean).join(", ");
-      const founder = await api.researchFounder({
-        query,
-        channels: ["linkedin", "twitter", "github", "news", "company_blog"],
+      const founder = await api.createFounder({
+        name: form.name,
+        email: form.email || `${form.name.toLowerCase().replace(/\s+/g, ".")}@example.com`,
+        current_company: form.company,
+        linkedin_url: form.linkedin_url,
+        github_url: form.github_url,
         auto_score: true,
-      });
-      setForm({
-        company: founder.current_company || form.company,
-        name: founder.name || form.name,
-        email: founder.email || form.email,
       });
       navigate(`/founders/${founder.id}`);
     } catch (err) {
@@ -54,9 +53,12 @@ export default function ApplicationNew() {
     setSubmitting(true);
     setError(null);
     try {
-      const founder = await api.researchFounder({
-        query: [form.name, form.company, form.email].filter(Boolean).join(", "),
-        channels: ["linkedin", "twitter", "github", "news", "company_blog"],
+      const founder = await api.createFounder({
+        name: form.name,
+        email: form.email,
+        current_company: form.company,
+        linkedin_url: form.linkedin_url,
+        github_url: form.github_url,
         auto_score: true,
       });
       navigate(`/founders/${founder.id}`);
@@ -99,6 +101,26 @@ export default function ApplicationNew() {
             onChange={(e) => update("email", e.target.value)}
           />
         </div>
+        <div>
+          <label className="label mb-1.5 block">LinkedIn URL</label>
+          <input
+            type="url"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            placeholder="https://linkedin.com/in/janedoe"
+            value={form.linkedin_url}
+            onChange={(e) => update("linkedin_url", e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="label mb-1.5 block">GitHub URL</label>
+          <input
+            type="url"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            placeholder="https://github.com/janedoe"
+            value={form.github_url}
+            onChange={(e) => update("github_url", e.target.value)}
+          />
+        </div>
         <div className="rounded-lg border-2 border-dashed border-slate-300 p-8 text-center">
           <Upload className="mx-auto mb-2 text-slate-400" size={32} />
           <p className="text-sm text-slate-600">Drop pitch deck here or click to upload.</p>
@@ -136,8 +158,9 @@ export default function ApplicationNew() {
           <FileText size={16} /> Ingestion preview
         </div>
         <p className="text-xs text-slate-500">
-          On submit, the system researches public sources, extracts claims, and converts findings into
-          scored evidence with source locators and trust status.
+          On submit, the system queues a background Celery worker to research LinkedIn/GitHub,
+          extract claims, and convert findings into scored evidence with source locators and trust
+          status.
         </p>
       </div>
     </div>
