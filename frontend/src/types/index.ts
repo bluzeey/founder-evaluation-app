@@ -62,7 +62,17 @@ export interface Founder {
   current_company?: string;
   role?: string;
   location?: string;
+  linkedin_url?: string;
+  github_url?: string;
+  ai_research_summary?: string;
+  ai_research_sources?: string[];
   latest_score_snapshot?: ScoreSnapshot;
+}
+
+export interface ResearchFounderRequest {
+  query: string;
+  channels?: string[];
+  auto_score?: boolean;
 }
 
 export interface Thesis {

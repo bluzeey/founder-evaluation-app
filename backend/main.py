@@ -24,6 +24,7 @@ from models import (
     Decision,
 )
 from scoring import calculate_founder_score
+from research import UmansClient, create_founder_from_research, evidence_from_llm
 
 app = FastAPI(title="FounderOS API", version="0.1.0")
 
@@ -73,6 +74,12 @@ class SimulateAssessmentRequest(BaseModel):
     responses: Dict[AssessmentModule, str]
 
 
+class ResearchFounderRequest(BaseModel):
+    query: str
+    channels: List[str] = ["linkedin", "twitter", "github", "news", "company_blog"]
+    auto_score: bool = True
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -91,6 +98,37 @@ def create_founder(req: CreateFounderRequest):
     )
     FOUNDERS[founder_id] = founder
     EVIDENCE[founder_id] = []
+    return founder
+
+
+@app.post("/v1/founders/research", response_model=Founder)
+def research_founder(req: ResearchFounderRequest):
+    """Research a founder with Umans AI web search and create a scored profile."""
+    try:
+        client = UmansClient()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    try:
+        result = client.research(req.query, req.channels)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Research failed: {exc}") from exc
+
+    profile = result.get("profile", {})
+    summary = result.get("summary", "")
+    sources = result.get("sources", [])
+    evidence_data = result.get("evidence", [])
+
+    founder = create_founder_from_research(profile, summary, sources)
+    FOUNDERS[founder.id] = founder
+    EVIDENCE[founder.id] = []
+
+    evidence_items = [evidence_from_llm(founder.id, item) for item in evidence_data]
+    if req.auto_score and evidence_items:
+        EVIDENCE[founder.id] = evidence_items
+        snapshot = calculate_founder_score(founder.id, evidence_items)
+        founder.latest_score_snapshot = snapshot
+
     return founder
 
 

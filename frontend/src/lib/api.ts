@@ -1,4 +1,4 @@
-import type { Founder, Thesis, ScoreSnapshot, OpportunityScreen, Claim, AssessmentPlan, AssessmentModule } from "@/types";
+import type { Founder, Thesis, ScoreSnapshot, OpportunityScreen, Claim, AssessmentPlan, AssessmentModule, ResearchFounderRequest } from "@/types";
 
 const API_BASE = import.meta.env.VITE_API_URL || "/api";
 
@@ -30,4 +30,6 @@ export const api = {
   getDiligence: (id: string) => fetcher<Claim[]>(`/v1/opportunities/${id}/diligence`),
   listTheses: () => fetcher<Thesis[]>("/v1/theses"),
   createThesis: (body: unknown) => fetcher<Thesis>("/v1/theses", { method: "POST", body: JSON.stringify(body) }),
+  researchFounder: (body: ResearchFounderRequest) =>
+    fetcher<Founder>("/v1/founders/research", { method: "POST", body: JSON.stringify(body) }),
 };

@@ -232,6 +232,8 @@ class Founder(BaseModel):
     location_city: Optional[str] = None
     linkedin_url: Optional[str] = None
     github_url: Optional[str] = None
+    ai_research_summary: Optional[str] = None
+    ai_research_sources: List[str] = []
     latest_score_snapshot: Optional[ScoreSnapshot] = None
 
 
