@@ -1,0 +1,181 @@
+# FounderOS
+
+**Evidence-first founder intelligence for early-stage investors.**
+
+FounderOS is a versioned, evidence-backed estimate of demonstrated founder capabilities—not an AI personality score. It separates confidence, coverage, contradictions, and unknowns so investors can answer:
+
+- What has this founder demonstrated?
+- What evidence supports each conclusion?
+- How confident are we?
+- What remains unknown?
+- What could change the conclusion?
+- What is the next best diligence action?
+- Should we advance, investigate, hold, or decline?
+
+## What FounderOS is and is not
+
+| It is | It is not |
+|---|---|
+| An evidence-weighted estimate of persistent founder capability | A prediction of startup success with certainty |
+| A structured way to generate evidence for low-data founders | A personality or charisma test |
+| Three independent opportunity axes (Founder, Market, Idea-vs-Market) | A single opaque number |
+| A deterministic score engine fed by graded evidence | An LLM writing the final numeric score |
+| Transparent about confidence, coverage, and contradictions | A system that treats missing data as negative evidence |
+| Blind to pedigree proxies | A score that rewards university, employer, or network prestige |
+
+## Core product principle
+
+The system should never say:
+
+> “AI believes this person is a strong founder.”
+
+It should say:
+
+> “The founder demonstrated strong belief updating in two structured scenarios, supported by these responses. They showed moderate commercial ability in one sales simulation, but no real customer reference is currently available. Leadership remains unknown. The current Founder Score is 68, with 52% confidence. The next highest-value action is a customer reference and a team-scaling review.”
+
+## Repository structure
+
+```
+founder-evaluation-app/
+├── frontend/          # React + Vite + TypeScript + Tailwind → Vercel
+│   ├── src/
+│   ├── vercel.json
+│   └── package.json
+├── backend/           # FastAPI + Pydantic + deterministic engine → Railway
+│   ├── main.py
+│   ├── scoring.py
+│   ├── models.py
+│   ├── tests/
+│   ├── railway.json
+│   └── Procfile
+├── .gitignore
+└── README.md
+```
+
+## Architecture overview
+
+- **Frontend:** Desktop-first investor interface and mobile-friendly founder assessment workspace.
+- **Backend:** FastAPI application that owns data models, evidence normalization, deterministic scoring, and workflow endpoints.
+- **AI layer:** Agents for ingestion, gap planning, assessment conduction, independent grading, diligence validation, and memo generation. Model calls are routed through environment variables and can be powered by **Umans AI** (`umans-coder` / `umans-kimi-k2.7`). The deterministic score calculation itself lives in Python code, not in an LLM.
+- **Memory layer:** Founder Score persists across ventures; opportunity axes (Founder-Market Fit, Team Completeness, Market, Idea-vs-Market) are contextual.
+
+## Founder Score outputs
+
+Every score is presented together, never alone:
+
+```
+Founder Score: 68
+Evidence band: 56–77
+Confidence: 52%
+Evidence coverage: 44%
+Trend: +6 since previous assessment
+```
+
+Correct interpretation: “There are promising signals, but additional evidence is required.” It is **not** “this founder has a 68% chance of succeeding.”
+
+## The three opportunity axes
+
+The opportunity screen keeps these independent so a strong founder in a weak market is still visible:
+
+1. **Founder axis:** Persistent Founder Score, Founder-Market Fit, Team Completeness
+2. **Market axis:** Bullish / neutral / bear posture, timing, buyer urgency, competition
+3. **Idea-vs-Market axis:** Problem-solution coherence, distribution feasibility, defensibility, pivot potential
+
+No overall average is computed to hide disagreement.
+
+## Local development
+
+```bash
+# 1. Backend
+cd backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+
+# 2. Frontend
+cd frontend
+npm install
+npm run dev
+```
+
+The Vite dev server proxies `/api` to `http://localhost:8000`.
+
+Run backend tests:
+
+```bash
+cd backend
+source .venv/bin/activate
+pytest tests/test_scoring.py -v
+```
+
+## Deployment
+
+- **Frontend on Vercel:** Deploy the `frontend/` directory. Set `VITE_API_URL` to your Railway backend URL.
+- **Backend on Railway:** Deploy the `backend/` directory. Configuration is in `backend/railway.json` and `backend/Procfile`.
+
+## AI configuration
+
+Set model routing through environment variables on Railway:
+
+```env
+MODEL_EXTRACTION=umans-coder
+MODEL_CONDUCTOR=umans-kimi-k2.7
+MODEL_GRADER=umans-kimi-k2.7
+MODEL_ARBITER=umans-kimi-k2.7
+MODEL_MEMO=umans-coder
+UMANS_API_KEY=sk-your-umans-api-key
+UMANS_BASE_URL=https://api.code.umans.ai/v1
+```
+
+The deterministic score engine does not call an LLM; only the evidence extraction, grading, and memo agents do.
+
+## Hackathon demonstrator flow
+
+1. Open the investor dashboard.
+2. Click **Seed hackathon demo**.
+3. See a cold-start founder profile: **Founder Score 50**, **0% confidence**, all dimensions **Unknown**.
+4. Click **Invite assessment** and complete the structured simulations:
+   - Sales and objection handling
+   - Prioritization under constraints
+   - Belief updating
+   - Scaling and leadership
+5. Review the updated Founder Score and explore the evidence ledger.
+6. Open the opportunity screen to see the three independent axes.
+7. View diligence claims with trust status and contradictions.
+
+## Key product rules enforced in code
+
+- Missing dimensions are marked `Unknown`, never zero.
+- No single evidence item contributes more than 30% of a dimension’s effective weight.
+- AI chat alone cannot create confidence above 0.60.
+- Confidence above 0.65 requires at least one non-chat artifact or independently verified source.
+- Confidence above 0.80 requires evidence from at least three independent source groups.
+- A contradiction lowers confidence before it lowers the capability score.
+- Low-confidence scores are shrunk toward the neutral prior (50).
+- University, employer, geography, name, gender, age, accent, and social following do not enter the scoring formula.
+- Low confidence never triggers automatic rejection.
+- Every score snapshot stores rubric, prompt, model, and source versions.
+
+## Evaluation posture
+
+FounderOS is built to be evaluated as a measurement system:
+
+- Synthetic profiles with seeded contradictions and cold-start cases
+- Human rubric agreement studies
+- Counterfactual identity tests (name, gender-coded name, geography, university)
+- Test-retest reliability with equivalent scenario variants
+- Adversarial tests for prompt injection, memorized jargon, and unsupported claims
+
+## Delivery roadmap
+
+1. **Measurement foundation** — rubrics, evidence taxonomy, confidence rules, scoring engine, synthetic test sets
+2. **Memory and ingestion** — founder records, document upload, claims, evidence items, deduplication, score snapshots
+3. **Cold-start assessment** — Gap Planner, conductor, two graders, validator, human review, score update
+4. **Investor experience** — dashboard, profile, score explorer, three-axis screen, decision queue
+5. **Diligence and memo** — contradiction workspace, per-claim Trust Score, evidence-backed memo
+6. **Evaluation and hardening** — Evaluation Lab, model comparison, bias tests, observability, tenant isolation
+
+## License
+
+MIT
