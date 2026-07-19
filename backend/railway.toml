@@ -4,7 +4,7 @@
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "cd backend && gunicorn main:app --bind 0.0.0.0:${PORT:-8000} --workers 2 --timeout 120 --access-logfile - --error-logfile - --log-level info -k uvicorn.workers.UvicornWorker"
+startCommand = "gunicorn main:app --bind 0.0.0.0:${PORT:-8000} --workers 2 --timeout 120 --access-logfile - --error-logfile - --log-level info -k uvicorn.workers.UvicornWorker"
 healthcheckPath = "/health"
 healthcheckTimeout = 120
 healthcheckInterval = 15
