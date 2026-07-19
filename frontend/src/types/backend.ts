@@ -200,6 +200,27 @@ export type BackendSourcingStatus = {
   last_dispatch_at?: string;
 };
 
+export type BackendEnrichmentRun = {
+  id: string;
+  founder_id: string;
+  stage: string;
+  status: string;
+  evidence_added: number;
+  confidence_before?: number;
+  confidence_after?: number;
+  started_at?: string;
+  ended_at?: string;
+  error_message?: string;
+  created_at: string;
+};
+
+export type BackendEnrichmentStatus = {
+  below_threshold_count: number;
+  confidence_threshold: number;
+  last_dispatch_at?: string;
+  recent_runs: BackendEnrichmentRun[];
+};
+
 export type BackendSeedResponse = {
   thesis_id: string;
   founder_id: string;

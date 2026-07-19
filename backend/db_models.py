@@ -30,6 +30,7 @@ class Founder(Base):
     ai_research_sources: Mapped[List[str]] = mapped_column(JSONB, nullable=False, default=list)
     social_background_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     latest_score_snapshot_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    last_enriched_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utc_now, onupdate=_utc_now
@@ -210,3 +211,19 @@ class SourcingJob(Base):
     result: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now)
+
+
+class EnrichmentRun(Base):
+    __tablename__ = "enrichment_runs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    founder_id: Mapped[str] = mapped_column(String, ForeignKey("founders.id", ondelete="CASCADE"), nullable=False, index=True)
+    stage: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    evidence_added: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    confidence_before: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    confidence_after: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now, index=True)

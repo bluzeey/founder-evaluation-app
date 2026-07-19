@@ -8,6 +8,7 @@ import db_models
 from models import (
     Claim,
     DimensionBreakdown,
+    EnrichmentRun,
     EvidenceItem,
     Founder,
     FounderPoolItem,
@@ -788,3 +789,124 @@ def update_sourcing_job(db: Session, job_id: str, updates: Dict) -> Optional[db_
     db.commit()
     db.refresh(db_job)
     return db_job
+
+
+# -----------------------------------------------------------------------------
+# Enrichment
+# -----------------------------------------------------------------------------
+
+def list_founders_below_confidence(
+    db: Session,
+    threshold: float,
+    max_results: int,
+    min_gap_seconds: int,
+) -> List[db_models.Founder]:
+    """Return founders whose latest snapshot confidence is below `threshold`
+    and that have not been enriched within `min_gap_seconds`.
+
+    Cold-start founders (no snapshot yet, i.e. 0% confidence) are included.
+    Ordered by confidence ASC so the weakest founders are enriched first.
+    """
+    from datetime import timedelta
+
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=min_gap_seconds)
+    founders = (
+        db.query(db_models.Founder)
+        .outerjoin(
+            db_models.ScoreSnapshot,
+            db_models.ScoreSnapshot.id == db_models.Founder.latest_score_snapshot_id,
+        )
+        .filter(
+            db_models.Founder.last_enriched_at == None  # noqa: E711
+        )
+        .all()
+    )
+    # Two-pass filter: SQLAlchemy `or_` on JSONB-joined confidence is fiddly;
+    # do the confidence + gap check in Python for clarity.
+    candidates = []
+    for f in founders:
+        snapshot = (
+            db.query(db_models.ScoreSnapshot)
+            .filter(db_models.ScoreSnapshot.id == f.latest_score_snapshot_id)
+            .first()
+            if f.latest_score_snapshot_id
+            else None
+        )
+        confidence = snapshot.overall_confidence if snapshot else 0.0
+        if confidence >= threshold:
+            continue
+        if f.last_enriched_at is not None and f.last_enriched_at > cutoff:
+            continue
+        candidates.append((confidence, f))
+
+    candidates.sort(key=lambda pair: pair[0])
+    return [f for _, f in candidates[:max_results]]
+
+
+def mark_founder_enriched(db: Session, founder_id: str, enriched_at: Optional[datetime] = None) -> None:
+    db_founder = get_founder(db, founder_id)
+    if not db_founder:
+        return
+    db_founder.last_enriched_at = enriched_at or datetime.now(timezone.utc)
+    db.commit()
+
+
+def enrichment_run_to_db(run: EnrichmentRun) -> db_models.EnrichmentRun:
+    return db_models.EnrichmentRun(
+        id=run.id,
+        founder_id=run.founder_id,
+        stage=run.stage,
+        status=run.status,
+        evidence_added=run.evidence_added,
+        confidence_before=run.confidence_before,
+        confidence_after=run.confidence_after,
+        started_at=run.started_at,
+        ended_at=run.ended_at,
+        error_message=run.error_message,
+    )
+
+
+def enrichment_run_to_pydantic(db_run: db_models.EnrichmentRun) -> EnrichmentRun:
+    return EnrichmentRun(
+        id=db_run.id,
+        founder_id=db_run.founder_id,
+        stage=db_run.stage,
+        status=db_run.status,
+        evidence_added=db_run.evidence_added,
+        confidence_before=db_run.confidence_before,
+        confidence_after=db_run.confidence_after,
+        started_at=db_run.started_at,
+        ended_at=db_run.ended_at,
+        error_message=db_run.error_message,
+        created_at=db_run.created_at,
+    )
+
+
+def create_enrichment_run(db: Session, run: EnrichmentRun) -> db_models.EnrichmentRun:
+    db_run = enrichment_run_to_db(run)
+    db.add(db_run)
+    db.commit()
+    db.refresh(db_run)
+    return db_run
+
+
+def update_enrichment_run(db: Session, run_id: str, updates: Dict) -> Optional[db_models.EnrichmentRun]:
+    db_run = db.query(db_models.EnrichmentRun).filter(db_models.EnrichmentRun.id == run_id).first()
+    if not db_run:
+        return None
+    for key, value in updates.items():
+        setattr(db_run, key, value)
+    db.commit()
+    db.refresh(db_run)
+    return db_run
+
+
+def list_enrichment_runs(
+    db: Session,
+    founder_id: Optional[str] = None,
+    limit: int = 50,
+) -> List[db_models.EnrichmentRun]:
+    query = db.query(db_models.EnrichmentRun)
+    if founder_id:
+        query = query.filter(db_models.EnrichmentRun.founder_id == founder_id)
+    return query.order_by(db_models.EnrichmentRun.created_at.desc()).limit(limit).all()

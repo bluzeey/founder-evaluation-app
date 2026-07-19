@@ -16,6 +16,10 @@ DISPATCH_INTERVAL_SECONDS = float(
     os.environ.get("SOURCING_DISPATCH_INTERVAL_SECONDS", "60")
 )
 
+ENRICHMENT_DISPATCH_INTERVAL_SECONDS = float(
+    os.environ.get("ENRICHMENT_DISPATCH_INTERVAL_SECONDS", "180")
+)
+
 app = Celery("founderos", broker=REDIS_BROKER, backend=REDIS_BACKEND)
 
 app.conf.update(
@@ -32,6 +36,11 @@ app.conf.update(
             "schedule": DISPATCH_INTERVAL_SECONDS,
             "args": (),
         },
+        "dispatch-enrichment-jobs": {
+            "task": "tasks.enrichment_task.dispatch_enrichment_jobs",
+            "schedule": ENRICHMENT_DISPATCH_INTERVAL_SECONDS,
+            "args": (),
+        },
     },
 )
 
@@ -40,12 +49,14 @@ app.conf.imports = (
     "tasks.founder_pool",
     "tasks.document_extraction",
     "tasks.estimation_task",
+    "tasks.enrichment_task",
 )
 
 logger.info(
-    "celery_app.configured broker=%s backend=%s dispatch_interval_seconds=%s always_eager=%s",
+    "celery_app.configured broker=%s backend=%s dispatch_interval_seconds=%s enrichment_dispatch_seconds=%s always_eager=%s",
     REDIS_BROKER,
     REDIS_BACKEND,
     DISPATCH_INTERVAL_SECONDS,
+    ENRICHMENT_DISPATCH_INTERVAL_SECONDS,
     app.conf.task_always_eager,
 )

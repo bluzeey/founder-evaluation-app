@@ -153,6 +153,7 @@ export default function Discovery() {
                 <th className="px-4 py-3 font-sans font-semibold text-ink">Dimension scores</th>
                 <th className="px-4 py-3 font-sans font-semibold text-ink">Founder score</th>
                 <th className="px-4 py-3 font-sans font-semibold text-ink">Confidence</th>
+                <th className="px-4 py-3 font-sans font-semibold text-ink">Enrichment</th>
                 <th className="px-4 py-3 font-sans font-semibold text-ink"></th>
               </tr>
             </thead>
@@ -261,6 +262,21 @@ export default function Discovery() {
                             />
                           </div>
                         </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {confidencePct === null || confidencePct < 30 ? (
+                        <span className="inline-flex items-center gap-1 rounded-sm border border-uncertain/30 bg-uncertain/10 px-1.5 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wide text-uncertain">
+                          Needs enrichment
+                        </span>
+                      ) : confidencePct < 65 ? (
+                        <span className="inline-flex items-center gap-1 rounded-sm border border-action/30 bg-action/10 px-1.5 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wide text-action">
+                          In progress
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-sm border border-verified/30 bg-verified/10 px-1.5 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wide text-verified">
+                          Enriched
+                        </span>
                       )}
                     </td>
                     <td className="px-4 py-3">

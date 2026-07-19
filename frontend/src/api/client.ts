@@ -9,6 +9,8 @@ import type {
   BackendSourcingStatus,
   BackendSeedResponse,
   BackendScoreSnapshot,
+  BackendEnrichmentRun,
+  BackendEnrichmentStatus,
   CreateSourcingScheduleRequest,
   UpdateSourcingScheduleRequest,
   CreateThesisRequest,
@@ -112,7 +114,16 @@ export const api = {
     get: (id: string) => get<BackendFounder>(`/v1/founders/${id}`),
     score: (id: string) => get<BackendScoreSnapshot>(`/v1/founders/${id}/score`),
     estimate: (id: string) => post<QueuedResponse>(`/v1/founders/${id}/estimate`),
+    enrich: (id: string) => post<QueuedResponse>(`/v1/founders/${id}/enrich`),
     create: (req: CreateFounderRequest) => post<BackendFounder>("/v1/founders", req),
+  },
+
+  enrichment: {
+    runs: (founderId?: string) =>
+      get<BackendEnrichmentRun[]>(
+        `/v1/enrichment/runs${founderId ? `?founder_id=${encodeURIComponent(founderId)}` : ""}`
+      ),
+    status: () => get<BackendEnrichmentStatus>("/v1/enrichment/status"),
   },
 
   pool: {

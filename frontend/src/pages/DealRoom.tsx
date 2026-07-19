@@ -24,6 +24,8 @@ export default function DealRoom() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [estimating, setEstimating] = useState(false);
+  const [enriching, setEnriching] = useState(false);
+  const [enrichStage, setEnrichStage] = useState<string>("");
   const estimateTriggeredRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -44,15 +46,20 @@ export default function DealRoom() {
         if (f) setFounder(f);
         setSnapshot(snap);
 
-        // Auto-trigger AI estimation when the founder is at cold-start
-        // (0% confidence, all dimensions unknown). The estimate runs async
-        // via Celery; a separate effect polls the score until it updates.
+        // Auto-trigger the full enrichment pipeline when the founder is at
+        // cold-start (0% confidence, all dimensions unknown). The pipeline
+        // runs social research → deep web research → AI estimate via Celery;
+        // a separate effect polls enrichment runs + the score until the
+        // confidence crosses the threshold.
         const isColdStart = snap.overall_confidence <= 0;
         if (isColdStart && f && estimateTriggeredRef.current !== f.id) {
           estimateTriggeredRef.current = f.id;
           try {
-            await api.founders.estimate(f.id);
-            if (!cancelled) setEstimating(true);
+            await api.founders.enrich(f.id);
+            if (!cancelled) {
+              setEnriching(true);
+              setEnrichStage("social");
+            }
           } catch {
             // ignore — the backend may also auto-queue from the diligence endpoint
           }
@@ -114,6 +121,55 @@ export default function DealRoom() {
     };
   }, [estimating, founder, caseId]);
 
+  // Poll enrichment runs + score while the 3-stage pipeline is running.
+  // Shows the current stage and stops once confidence crosses the threshold
+  // (0.30) or after ~90s (timeout).
+  useEffect(() => {
+    if (!enriching || !founder || !caseId) return;
+    let cancelled = false;
+    const startedAt = Date.now();
+    const poll = setInterval(async () => {
+      if (cancelled) return;
+      if (Date.now() - startedAt > 90000) {
+        setEnriching(false);
+        return;
+      }
+      try {
+        const [runs, snap] = await Promise.all([
+          api.enrichment.runs(founder.id),
+          api.founders.score(founder.id),
+        ]);
+        if (cancelled) return;
+        setSnapshot(snap);
+        // Derive the current stage from the most recent running run.
+        const running = runs.find((r) => r.status === "running");
+        if (running) {
+          setEnrichStage(running.stage);
+        } else {
+          // No running stage; pick the latest run's stage for display.
+          const latest = runs[0];
+          if (latest) setEnrichStage(latest.stage);
+        }
+        // Stop once the confidence crosses the enrichment threshold.
+        if (snap.overall_confidence >= 0.3) {
+          setEnriching(false);
+          try {
+            const opp = await api.opportunities.get(caseId);
+            if (!cancelled) setOpportunity(opp);
+          } catch {
+            // ignore
+          }
+        }
+      } catch {
+        // ignore polling errors
+      }
+    }, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(poll);
+    };
+  }, [enriching, founder, caseId]);
+
   if (loading && !opportunity) {
     return (
       <div className="panel py-12 text-center">
@@ -144,7 +200,8 @@ export default function DealRoom() {
       uploading={uploading}
       setUploading={setUploading}
       estimating={estimating}
-      onStatusUpdated={(opp) => setOpportunity(opp)}
+      enriching={enriching}
+      enrichStage={enrichStage}
     />
   );
 }
@@ -170,6 +227,19 @@ function isEstimateOnly(
   const items = snapshot.evidence_items.filter((item) => item.dimension === breakdown.dimension);
   if (items.length === 0) return false;
   return items.every((item) => item.evidence_type === "inferred_estimate");
+}
+
+function stageLabel(stage: string): string {
+  switch (stage) {
+    case "social":
+      return "stage 1/3 social";
+    case "deep_web":
+      return "stage 2/3 web research";
+    case "estimate":
+      return "stage 3/3 estimate";
+    default:
+      return stage ? `stage ${stage}` : "starting";
+  }
 }
 
 function DimensionCard({
@@ -224,6 +294,8 @@ function LiveOpportunityView({
   uploading,
   setUploading,
   estimating,
+  enriching,
+  enrichStage,
   onStatusUpdated,
 }: {
   opportunity: BackendOpportunity;
@@ -233,6 +305,8 @@ function LiveOpportunityView({
   uploading: boolean;
   setUploading: (v: boolean) => void;
   estimating: boolean;
+  enriching: boolean;
+  enrichStage: string;
   onStatusUpdated?: (opp: BackendOpportunity) => void;
 }) {
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -348,11 +422,15 @@ function LiveOpportunityView({
       <div className="panel space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="font-display text-lg font-semibold text-ink">Founder score breakdown</h3>
-          {estimating && (
+          {enriching ? (
+            <span className="inline-flex items-center gap-1.5 rounded-sm border border-action/30 bg-action/10 px-2 py-1 text-xs font-mono font-medium text-action">
+              <Loader2 size={12} className="animate-spin" /> Enriching ({stageLabel(enrichStage)})…
+            </span>
+          ) : estimating ? (
             <span className="inline-flex items-center gap-1.5 rounded-sm border border-action/30 bg-action/10 px-2 py-1 text-xs font-mono font-medium text-action">
               <Loader2 size={12} className="animate-spin" /> Estimating score…
             </span>
-          )}
+          ) : null}
         </div>
         {snapshot ? (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">

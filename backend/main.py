@@ -41,6 +41,7 @@ from models import (
     SourcingJob,
     SourceConfig,
     ApprovedPoolItemResponse,
+    EnrichmentRun,
 )
 from scoring import calculate_founder_score
 from research import OpenAIClient, create_founder_from_research, evidence_from_llm
@@ -58,6 +59,7 @@ from tasks.founder_pool import (
 )
 from tasks.document_extraction import extract_document
 from tasks.estimation_task import run_estimate
+from tasks.enrichment_task import enrich_founder_chain
 
 app = FastAPI(title="FounderOS API", version="0.1.0")
 
@@ -553,6 +555,83 @@ def estimate_founder(founder_id: str, db: Session = Depends(get_db)):
         task.id,
     )
     return {"task_id": task.id, "status": "queued"}
+
+
+@app.post("/v1/founders/{founder_id}/enrich")
+def enrich_founder(founder_id: str, db: Session = Depends(get_db)):
+    """Queue the full 3-stage enrichment pipeline (social → deep web → estimate).
+
+    Runs asynchronously via Celery; poll GET /v1/enrichment/runs?founder_id=…
+    to observe stage progress, and GET /v1/founders/{id}/score for the score.
+    """
+    logger.info("endpoint.enrich_founder.start founder_id=%s", founder_id)
+    db_founder = crud.get_founder(db, founder_id)
+    if not db_founder:
+        logger.warning("endpoint.enrich_founder.not_found founder_id=%s", founder_id)
+        raise HTTPException(status_code=404, detail="Founder not found")
+
+    crud.mark_founder_enriched(db, founder_id)
+    task = enrich_founder_chain.delay(founder_id)
+    logger.info(
+        "endpoint.enrich_founder.queued founder_id=%s task_id=%s",
+        founder_id,
+        task.id,
+    )
+    return {"task_id": task.id, "status": "queued"}
+
+
+@app.get("/v1/enrichment/runs", response_model=List[EnrichmentRun])
+def list_enrichment_runs(
+    founder_id: Optional[str] = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    """List recent enrichment runs with per-stage confidence deltas."""
+    logger.info(
+        "endpoint.list_enrichment_runs founder_id=%s limit=%s",
+        founder_id,
+        limit,
+    )
+    runs = crud.list_enrichment_runs(db, founder_id=founder_id, limit=limit)
+    return [crud.enrichment_run_to_pydantic(r) for r in runs]
+
+
+@app.get("/v1/enrichment/status")
+def enrichment_status(db: Session = Depends(get_db)):
+    """Queue health for the enrichment pipeline: how many founders are below
+    the confidence threshold and the most recent dispatch time.
+    """
+    import redis as _redis
+
+    threshold = float(os.environ.get("ENRICHMENT_CONFIDENCE_THRESHOLD", "0.30"))
+    below = crud.list_founders_below_confidence(
+        db,
+        threshold=threshold,
+        max_results=10000,
+        min_gap_seconds=0,
+    )
+    last_dispatch_at = None
+    try:
+        client = _redis.from_url(
+            os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/0"),
+            decode_responses=True,
+        )
+        last_dispatch_at = client.get("enrichment:last_dispatch_at")
+    except Exception as exc:
+        logger.warning("endpoint.enrichment_status.redis_failed error=%s", exc)
+
+    recent = crud.list_enrichment_runs(db, limit=10)
+    logger.info(
+        "endpoint.enrichment_status below_threshold=%s recent=%s",
+        len(below),
+        len(recent),
+    )
+    return {
+        "below_threshold_count": len(below),
+        "confidence_threshold": threshold,
+        "last_dispatch_at": last_dispatch_at,
+        "recent_runs": [crud.enrichment_run_to_pydantic(r).model_dump(mode="json") for r in recent],
+    }
 
 
 @app.get("/v1/founders/{founder_id}/history", response_model=List[ScoreSnapshot])

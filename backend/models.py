@@ -336,3 +336,17 @@ class Decision(str, Enum):
     DILIGENCE = "diligence"
     HOLD = "hold"
     DECLINE = "decline"
+
+
+class EnrichmentRun(BaseModel):
+    id: str
+    founder_id: str
+    stage: str
+    status: str
+    evidence_added: int = 0
+    confidence_before: Optional[float] = None
+    confidence_after: Optional[float] = None
+    started_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
