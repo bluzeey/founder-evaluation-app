@@ -6,15 +6,26 @@ import pytest
 
 os.environ["CELERY_ALWAYS_EAGER"] = "true"
 
+import crud
 from tasks.social_research import (
     load_social_background,
     research_social_background,
     store_social_background,
 )
-from models import SocialMediaBackground
+from models import Founder, SocialMediaBackground
 
 
-def test_store_and_load_social_background():
+def _create_test_founder(db, founder_id="fnd_test"):
+    founder = Founder(
+        id=founder_id,
+        name="Jane Doe",
+        email="jane@example.com",
+    )
+    return crud.create_founder(db, founder)
+
+
+def test_store_and_load_social_background(db):
+    _create_test_founder(db, "fnd_test")
     bg = SocialMediaBackground(
         id="soc_test",
         founder_id="fnd_test",
@@ -32,7 +43,8 @@ def test_store_and_load_social_background():
 
 
 @patch("tasks.social_research.SocialAgent")
-def test_research_social_background_task_runs_and_scores(mock_agent_cls):
+def test_research_social_background_task_runs_and_scores(mock_agent_cls, db):
+    _create_test_founder(db, "fnd_test")
     from research.extractor import evidence_from_llm
 
     mock_agent = mock_agent_cls.return_value

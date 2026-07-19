@@ -10,6 +10,7 @@ from database import SessionLocal
 import crud
 import db_models
 from models import FounderPoolItem, PoolItemStatus
+from research import SourcingAgent
 
 logger = logging.getLogger(__name__)
 
@@ -120,8 +121,6 @@ def refresh_founder_pool(
     try:
         existing = crud.list_pool_items(db)
         logger.info("founder_pool.refresh.existing_count count=%s", len(existing))
-
-        from research import SourcingAgent
 
         agent = SourcingAgent()
         result = agent.discover(

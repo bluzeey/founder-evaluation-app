@@ -45,8 +45,12 @@ founder-evaluation-app/
 │   ├── main.py
 │   ├── scoring.py
 │   ├── models.py
+│   ├── database.py
+│   ├── db_models.py
+│   ├── crud.py
+│   ├── alembic/
 │   ├── tests/
-│   ├── railway.json
+│   ├── railway.toml
 │   └── Procfile
 ├── .gitignore
 └── README.md
@@ -85,12 +89,21 @@ No overall average is computed to hide disagreement.
 
 ## Local development
 
+Prerequisites: **PostgreSQL** and **Redis** running locally.
+
 ```bash
 # 1. Backend
 cd backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+
+# Set DATABASE_URL and Redis URLs, then run migrations
+export DATABASE_URL="postgresql://user:password@localhost:5432/founderos"
+export CELERY_BROKER_URL="redis://localhost:6379/0"
+export CELERY_RESULT_BACKEND="redis://localhost:6379/0"
+alembic upgrade head
+
 uvicorn main:app --reload --port 8000
 
 # 2. Frontend
@@ -101,24 +114,31 @@ npm run dev
 
 The Vite dev server proxies `/api` to `http://localhost:8000`.
 
-Run backend tests:
+Run backend tests (uses a dedicated `founderos_test` PostgreSQL database):
 
 ```bash
 cd backend
 source .venv/bin/activate
-pytest tests/test_scoring.py -v
+pytest tests/ -v
 ```
 
 ## Deployment
 
 - **Frontend on Vercel:** Deploy the `frontend/` directory. Set `VITE_API_URL` to your Railway backend URL.
-- **Backend on Railway:** Deploy the `backend/` directory. Configuration is in `backend/railway.json` and `backend/Procfile`.
+- **Backend on Railway:** Deploy the `backend/` directory. Configuration is in `backend/railway.toml` and `backend/Procfile`.
+  - Add a PostgreSQL database service and set `DATABASE_URL`.
+  - Add a Redis service and set `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND`.
+  - The web start command runs `alembic upgrade head` before starting the server.
 
 ## AI configuration
 
-Set model routing through environment variables on Railway:
+Set environment variables on Railway:
 
 ```env
+DATABASE_URL=postgresql://postgres:password@localhost:5432/founderos
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/0
+
 MODEL_EXTRACTION=umans-coder
 MODEL_CONDUCTOR=umans-kimi-k2.7
 MODEL_GRADER=umans-kimi-k2.7
