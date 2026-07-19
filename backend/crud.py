@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -14,6 +15,8 @@ from models import (
     ScoreSnapshot,
     SocialFootprint,
     SocialMediaBackground,
+    SourcingJob,
+    SourcingSchedule,
     Thesis,
 )
 
@@ -509,6 +512,7 @@ def claim_to_db(claim: Claim) -> db_models.Claim:
     return db_models.Claim(
         id=claim.id,
         opportunity_id=claim.opportunity_id,
+        founder_id=claim.founder_id,
         claim=claim.claim,
         source=claim.source,
         trust_status=claim.trust_status.value,
@@ -525,6 +529,7 @@ def claim_to_pydantic(db_claim: db_models.Claim) -> Claim:
     return Claim(
         id=db_claim.id,
         opportunity_id=db_claim.opportunity_id,
+        founder_id=db_claim.founder_id,
         claim=db_claim.claim,
         source=db_claim.source,
         trust_status=TrustStatus(db_claim.trust_status),
@@ -551,3 +556,170 @@ def list_claims_for_opportunity(db: Session, opportunity_id: str) -> List[Claim]
         .all()
     )
     return [claim_to_pydantic(c) for c in db_claims]
+
+
+# -----------------------------------------------------------------------------
+# Sourcing Schedules
+# -----------------------------------------------------------------------------
+
+def sourcing_schedule_to_db(schedule: SourcingSchedule) -> db_models.SourcingSchedule:
+    return db_models.SourcingSchedule(
+        id=schedule.id,
+        thesis_id=schedule.thesis_id,
+        enabled=schedule.enabled,
+        interval_seconds=schedule.interval_seconds,
+        max_leads_per_run=schedule.max_leads_per_run,
+        last_run_at=schedule.last_run_at,
+        next_run_at=schedule.next_run_at,
+        created_at=schedule.created_at,
+        updated_at=schedule.updated_at,
+    )
+
+
+def sourcing_schedule_to_pydantic(db_schedule: db_models.SourcingSchedule) -> SourcingSchedule:
+    return SourcingSchedule(
+        id=db_schedule.id,
+        thesis_id=db_schedule.thesis_id,
+        enabled=db_schedule.enabled,
+        interval_seconds=db_schedule.interval_seconds,
+        max_leads_per_run=db_schedule.max_leads_per_run,
+        last_run_at=db_schedule.last_run_at,
+        next_run_at=db_schedule.next_run_at,
+        created_at=db_schedule.created_at,
+        updated_at=db_schedule.updated_at,
+    )
+
+
+def create_sourcing_schedule(db: Session, schedule: SourcingSchedule) -> db_models.SourcingSchedule:
+    db_schedule = sourcing_schedule_to_db(schedule)
+    db.add(db_schedule)
+    db.commit()
+    db.refresh(db_schedule)
+    return db_schedule
+
+
+def get_sourcing_schedule(db: Session, schedule_id: str) -> Optional[db_models.SourcingSchedule]:
+    return db.query(db_models.SourcingSchedule).filter(db_models.SourcingSchedule.id == schedule_id).first()
+
+
+def get_sourcing_schedule_by_thesis(db: Session, thesis_id: str) -> Optional[db_models.SourcingSchedule]:
+    return (
+        db.query(db_models.SourcingSchedule)
+        .filter(db_models.SourcingSchedule.thesis_id == thesis_id)
+        .first()
+    )
+
+
+def list_sourcing_schedules(db: Session, enabled_only: bool = False) -> List[db_models.SourcingSchedule]:
+    query = db.query(db_models.SourcingSchedule)
+    if enabled_only:
+        query = query.filter(db_models.SourcingSchedule.enabled == True)
+    return query.order_by(db_models.SourcingSchedule.created_at.desc()).all()
+
+
+def update_sourcing_schedule(
+    db: Session, schedule_id: str, updates: Dict
+) -> Optional[db_models.SourcingSchedule]:
+    db_schedule = get_sourcing_schedule(db, schedule_id)
+    if not db_schedule:
+        return None
+    for key, value in updates.items():
+        setattr(db_schedule, key, value)
+    db.commit()
+    db.refresh(db_schedule)
+    return db_schedule
+
+
+def delete_sourcing_schedule(db: Session, schedule_id: str) -> bool:
+    db_schedule = get_sourcing_schedule(db, schedule_id)
+    if not db_schedule:
+        return False
+    db.delete(db_schedule)
+    db.commit()
+    return True
+
+
+def list_due_sourcing_schedules(db: Session, now: Optional[datetime] = None) -> List[db_models.SourcingSchedule]:
+    now = now or datetime.now(timezone.utc)
+    return (
+        db.query(db_models.SourcingSchedule)
+        .filter(db_models.SourcingSchedule.enabled == True)
+        .filter(
+            (db_models.SourcingSchedule.next_run_at == None)  # noqa: E711
+            | (db_models.SourcingSchedule.next_run_at <= now)
+        )
+        .all()
+    )
+
+
+# -----------------------------------------------------------------------------
+# Sourcing Jobs
+# -----------------------------------------------------------------------------
+
+def sourcing_job_to_db(job: SourcingJob) -> db_models.SourcingJob:
+    return db_models.SourcingJob(
+        id=job.id,
+        thesis_id=job.thesis_id,
+        schedule_id=job.schedule_id,
+        status=job.status,
+        started_at=job.started_at,
+        ended_at=job.ended_at,
+        leads_found=job.leads_found,
+        leads_added=job.leads_added,
+        leads_skipped=job.leads_skipped,
+        error_message=job.error_message,
+        created_at=job.created_at,
+    )
+
+
+def sourcing_job_to_pydantic(db_job: db_models.SourcingJob) -> SourcingJob:
+    return SourcingJob(
+        id=db_job.id,
+        thesis_id=db_job.thesis_id,
+        schedule_id=db_job.schedule_id,
+        status=db_job.status,
+        started_at=db_job.started_at,
+        ended_at=db_job.ended_at,
+        leads_found=db_job.leads_found,
+        leads_added=db_job.leads_added,
+        leads_skipped=db_job.leads_skipped,
+        error_message=db_job.error_message,
+        created_at=db_job.created_at,
+    )
+
+
+def create_sourcing_job(db: Session, job: SourcingJob) -> db_models.SourcingJob:
+    db_job = sourcing_job_to_db(job)
+    db.add(db_job)
+    db.commit()
+    db.refresh(db_job)
+    return db_job
+
+
+def get_sourcing_job(db: Session, job_id: str) -> Optional[db_models.SourcingJob]:
+    return db.query(db_models.SourcingJob).filter(db_models.SourcingJob.id == job_id).first()
+
+
+def list_sourcing_jobs(
+    db: Session,
+    thesis_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50,
+) -> List[db_models.SourcingJob]:
+    query = db.query(db_models.SourcingJob)
+    if thesis_id:
+        query = query.filter(db_models.SourcingJob.thesis_id == thesis_id)
+    if status:
+        query = query.filter(db_models.SourcingJob.status == status)
+    return query.order_by(db_models.SourcingJob.created_at.desc()).limit(limit).all()
+
+
+def update_sourcing_job(db: Session, job_id: str, updates: Dict) -> Optional[db_models.SourcingJob]:
+    db_job = get_sourcing_job(db, job_id)
+    if not db_job:
+        return None
+    for key, value in updates.items():
+        setattr(db_job, key, value)
+    db.commit()
+    db.refresh(db_job)
+    return db_job

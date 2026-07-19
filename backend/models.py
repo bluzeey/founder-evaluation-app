@@ -166,6 +166,7 @@ class TrustStatus(str, Enum):
 class Claim(BaseModel):
     id: str
     opportunity_id: str
+    founder_id: Optional[str] = None
     claim: str
     source: str
     trust_status: TrustStatus
@@ -173,6 +174,32 @@ class Claim(BaseModel):
     contradiction: Optional[str] = None
     owner: Optional[str] = None
     next_action: Optional[str] = None
+
+
+class SourcingSchedule(BaseModel):
+    id: str
+    thesis_id: str
+    enabled: bool = True
+    interval_seconds: int = 3600
+    max_leads_per_run: int = 10
+    last_run_at: Optional[datetime] = None
+    next_run_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class SourcingJob(BaseModel):
+    id: str
+    thesis_id: str
+    schedule_id: Optional[str] = None
+    status: str = "pending"
+    started_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
+    leads_found: int = 0
+    leads_added: int = 0
+    leads_skipped: int = 0
+    error_message: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class SocialFootprint(BaseModel):

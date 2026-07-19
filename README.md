@@ -129,6 +129,14 @@ pytest tests/ -v
   - Add a PostgreSQL database service and set `DATABASE_URL`.
   - Add a Redis service and set `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND`.
   - The web start command runs `alembic upgrade head` before starting the server.
+  - Run a Celery beat service (`celery -A celery_app beat -l info`) and a worker service (`celery -A celery_app worker -l info`) for background tasks.
+
+## Deck upload and sourcing automation
+
+- **Deck upload:** `POST /v1/opportunities/{id}/deck` accepts a PDF, DOCX, TXT, or MD file. The file is **not stored**; its text is extracted and sent to the AI model. Extracted claims are saved to the opportunity, and extracted evidence is saved to the founder's score ledger.
+- **Sourcing schedules:** `POST /v1/sourcing/schedules` attaches a repeating interval to a thesis. The Celery beat dispatcher checks every minute and queues a sourcing job for any due schedule.
+- **Manual sourcing:** `POST /v1/theses/{id}/source-now` triggers a one-time sourcing job immediately.
+- **Job history:** `GET /v1/sourcing/jobs` returns the list of sourcing runs with counts of leads found, added, and skipped.
 
 ## AI configuration
 
@@ -139,13 +147,15 @@ DATABASE_URL=postgresql://postgres:password@localhost:5432/founderos
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
 
-MODEL_EXTRACTION=umans-coder
-MODEL_CONDUCTOR=umans-kimi-k2.7
-MODEL_GRADER=umans-kimi-k2.7
-MODEL_ARBITER=umans-kimi-k2.7
-MODEL_MEMO=umans-coder
 UMANS_API_KEY=sk-your-umans-api-key
-UMANS_BASE_URL=https://api.code.umans.ai/v1
+UMANS_MODEL=umans-coder
+UMANS_SOCIAL_MODEL=umans-coder
+UMANS_DOCUMENT_MODEL=umans-coder
+UMANS_WEBSEARCH_PROVIDER=native
+UMANS_RESEARCH_TIMEOUT=60
+
+SOURCING_DISPATCH_INTERVAL_SECONDS=60
+POOL_LOCK_TTL_SECONDS=300
 ```
 
 The deterministic score engine does not call an LLM; only the evidence extraction, grading, and memo agents do.

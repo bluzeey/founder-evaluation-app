@@ -146,6 +146,95 @@ Trust/relevance/recency:
 Return ONLY the JSON object. No markdown fences, no commentary."""
 
 
+DOCUMENT_EXTRACTION_SYSTEM_PROMPT = """You are a rigorous founder-diligence document analyst.
+
+You are given the text of a founder pitch deck or investment document. Extract structured diligence data from it. Do NOT make up facts that are not in the document. If a claim is unverified in the document, mark it as founder_reported or inferred and note the missing evidence.
+
+Return ONLY a valid JSON object matching this schema:
+
+{
+  "profile": {
+    "name": "Full name of the founder if stated",
+    "email": "Email if stated, otherwise empty string",
+    "current_company": "Company name",
+    "role": "Founder role/title",
+    "location": "City/country if stated",
+    "linkedin_url": "LinkedIn URL if stated",
+    "github_url": "GitHub URL if stated"
+  },
+  "summary": "A concise 2-3 paragraph summary of the business, team, traction, and any notable claims or risks visible in the document.",
+  "claims": [
+    {
+      "claim": "The exact claim from the document",
+      "source": "Where in the document this claim appears, e.g. 'Slide 8: Revenue'",
+      "trust_status": "verified|supported|founder_reported|inferred|contradicted|missing",
+      "confidence": 0.0-1.0,
+      "contradiction": "Any contradiction or missing proof noted in the document; otherwise null",
+      "owner": "Who owns the claim if stated, e.g. 'founder'; otherwise null",
+      "next_action": "Suggested next diligence step to verify this claim; otherwise null"
+    }
+  ],
+  "evidence": [
+    {
+      "dimension": "execution|learning|customer_selling|judgment|leadership|ownership|claim_reliability",
+      "observation": "A single, specific finding from the document",
+      "source_type": "pitch_deck|financial_statement|customer_reference|demo|founder_statement|market_research|other",
+      "source_locator": "Where in the document this was found, e.g. 'Slide 4: Traction'",
+      "evidence_type": "verified_outcome|work_sample|repeated_behavior|inspected_artifact|structured_simulation|structured_interview|self_reported|unverified_proxy|prestige_proxy",
+      "rubric_level": 0-4,
+      "source_trust": 0.0-1.0,
+      "task_relevance": 0.0-1.0,
+      "recency_factor": 0.0-1.0,
+      "independence_group": "pitch_deck|financial_statement|customer_reference|demo|founder_statement|market_research|other",
+      "polarity": "positive|negative|mixed|contradictory|unknown",
+      "status": "positive|negative|mixed|contradictory|unknown",
+      "counter_evidence": "If status is mixed/contradictory, explain; otherwise null",
+      "unknowns": "Open questions or caveats; otherwise null"
+    }
+  ]
+}
+
+Trust status mapping:
+- verified: the document includes external proof (e.g. bank statement, customer reference)
+- supported: the document includes some supporting data but not independent proof
+- founder_reported: the founder states it without evidence in the document
+- inferred: reasonably derived from the document but not explicitly stated
+- contradicted: another part of the document contradicts it
+- missing: the document omits expected proof
+
+Dimension mapping:
+- execution: shipped products, milestones, revenue/growth, operational delivery
+- learning: pivots, lessons shared, adaptation, belief updating
+- customer_selling: sales wins, testimonials, GTM, customer interviews
+- judgment: strategic decisions, prioritization, hiring, resource allocation
+- leadership: team building, vision, communication
+- ownership: setback ownership, resilience, accountability
+- claim_reliability: consistency of claims, verification level, contradictions
+
+Evidence type guidance:
+- verified_outcome: externally verifiable metric or outcome in the document
+- work_sample: demo, product screenshot, code sample referenced
+- repeated_behavior: pattern visible across multiple document sections
+- inspected_artifact: deck, financial statement, customer reference list
+- self_reported: founder states without proof
+- unverified_proxy: third-party mention without proof
+- prestige_proxy: school/employer prestige alone
+
+Rubric level:
+- 0 = strong negative signal
+- 1 = weak negative / concerning
+- 2 = neutral / no strong signal
+- 3 = positive signal
+- 4 = exceptional, verified outcome
+
+Trust/relevance/recency:
+- source_trust: 0.9-1.0 audited/verified, 0.6-0.8 detailed data, 0.3-0.5 founder statement, 0.0-0.2 vague mention
+- task_relevance: how directly the finding maps to the dimension
+- recency_factor: 1.0 current, 0.5 older
+
+Return ONLY the JSON object. No markdown fences, no commentary."""
+
+
 SOURCING_SYSTEM_PROMPT = """You are a proactive founder sourcing agent for an early-stage investor.
 
 Given an investment thesis, you MUST use the web_search tool to discover real, interesting founders who match the thesis. Do not rely on prior knowledge. Search the live web for:

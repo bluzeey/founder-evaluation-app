@@ -1,6 +1,7 @@
 import logging
 import os
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import redis
@@ -9,7 +10,7 @@ from celery_app import app
 from database import SessionLocal
 import crud
 import db_models
-from models import FounderPoolItem, PoolItemStatus
+from models import FounderPoolItem, PoolItemStatus, SourcingJob
 from research import SourcingAgent
 
 logger = logging.getLogger(__name__)
@@ -88,29 +89,51 @@ def release_refresh_lock() -> None:
         logger.warning("founder_pool.refresh_lock.release_failed error=%s", exc)
 
 
+def _founder_exists(db, item: FounderPoolItem) -> bool:
+    """Check whether a founder with the same dedup key already exists."""
+    from sqlalchemy import func
+
+    name_norm = (item.name or "").lower().strip()
+    company_norm = (item.current_company or "").lower().strip()
+    linkedin_norm = (item.linkedin_url or "").lower().strip()
+
+    existing = (
+        db.query(db_models.Founder)
+        .filter(
+            func.lower(func.trim(db_models.Founder.name)) == name_norm,
+            func.lower(func.trim(db_models.Founder.current_company)) == company_norm,
+            func.lower(func.trim(db_models.Founder.linkedin_url)) == linkedin_norm,
+        )
+        .first()
+    )
+    return existing is not None
+
+
 def refresh_founder_pool(
     sectors: Optional[List[str]] = None,
     stages: Optional[List[str]] = None,
     geographies: Optional[List[str]] = None,
     risk_appetite: str = "moderate",
     thesis_id: Optional[str] = None,
+    job_id: Optional[str] = None,
 ) -> List[FounderPoolItem]:
     """Run the sourcing agent and append new recommendations to the database pool.
 
     Existing recommended items are replaced; approved/dismissed items are preserved.
-    Duplicate candidates are skipped.
+    Duplicate candidates are skipped against both the pool and existing founders.
     """
     sectors = sectors or ["B2B SaaS", "AI Infrastructure"]
     stages = stages or ["pre-seed", "seed"]
     geographies = geographies or ["Global"]
 
     logger.info(
-        "founder_pool.refresh.start sectors=%s stages=%s geographies=%s risk=%s thesis_id=%s",
+        "founder_pool.refresh.start sectors=%s stages=%s geographies=%s risk=%s thesis_id=%s job_id=%s",
         sectors,
         stages,
         geographies,
         risk_appetite,
         thesis_id,
+        job_id,
     )
 
     if not acquire_refresh_lock():
@@ -119,6 +142,17 @@ def refresh_founder_pool(
 
     db = SessionLocal()
     try:
+        # Mark job as running if provided.
+        if job_id:
+            crud.update_sourcing_job(
+                db,
+                job_id,
+                {
+                    "status": "running",
+                    "started_at": datetime.now(timezone.utc),
+                },
+            )
+
         existing = crud.list_pool_items(db)
         logger.info("founder_pool.refresh.existing_count count=%s", len(existing))
 
@@ -152,7 +186,11 @@ def refresh_founder_pool(
                 thesis_id=thesis_id,
             )
             key = _dedup_key(item)
-            if key in existing_keys or crud.pool_item_exists(db, item.name, item.current_company, item.linkedin_url):
+            if (
+                key in existing_keys
+                or crud.pool_item_exists(db, item.name, item.current_company, item.linkedin_url)
+                or _founder_exists(db, item)
+            ):
                 skipped += 1
                 logger.info(
                     "founder_pool.refresh.skip_duplicate name=%s company=%s",
@@ -173,16 +211,132 @@ def refresh_founder_pool(
             crud.create_pool_items(db, new_items)
 
         db.commit()
+        final_pool = crud.list_pool_items(db)
+
+        # Update job if provided.
+        if job_id:
+            crud.update_sourcing_job(
+                db,
+                job_id,
+                {
+                    "status": "completed",
+                    "ended_at": datetime.now(timezone.utc),
+                    "leads_found": len(recommendations),
+                    "leads_added": len(new_items),
+                    "leads_skipped": skipped,
+                },
+            )
 
         logger.info(
             "founder_pool.refresh.end added=%s skipped=%s total=%s",
             len(new_items),
             skipped,
-            len(crud.list_pool_items(db)),
+            len(final_pool),
         )
         return load_founder_pool()
+    except Exception as exc:
+        logger.error("founder_pool.refresh.error error=%s", exc)
+        if job_id:
+            crud.update_sourcing_job(
+                db,
+                job_id,
+                {
+                    "status": "failed",
+                    "ended_at": datetime.now(timezone.utc),
+                    "error_message": str(exc),
+                },
+            )
+        raise
     finally:
         release_refresh_lock()
+        db.close()
+
+
+def run_sourcing_job(thesis_id: str) -> str:
+    """Create a sourcing job record and dispatch the Celery task."""
+    db = SessionLocal()
+    try:
+        db_thesis = crud.get_thesis(db, thesis_id)
+        if not db_thesis:
+            raise ValueError(f"Thesis not found: {thesis_id}")
+        thesis = crud.thesis_to_pydantic(db_thesis)
+
+        job_id = f"job_{uuid.uuid4().hex[:8]}"
+        job = SourcingJob(
+            id=job_id,
+            thesis_id=thesis_id,
+            status="pending",
+            created_at=datetime.now(timezone.utc),
+        )
+        crud.create_sourcing_job(db, job)
+
+        refresh_pool_task.delay(
+            sectors=thesis.sectors,
+            stages=thesis.stages,
+            geographies=thesis.geographies,
+            risk_appetite=thesis.risk_appetite,
+            thesis_id=thesis_id,
+            job_id=job_id,
+        )
+        return job_id
+    finally:
+        db.close()
+
+
+@app.task(bind=True, max_retries=2, default_retry_delay=5)
+def dispatch_sourcing_jobs(self) -> Dict[str, Any]:
+    """Celery beat task that dispatches sourcing jobs for due schedules."""
+    now = datetime.now(timezone.utc)
+    logger.info("founder_pool.dispatch_sourcing_jobs.start now=%s", now)
+
+    db = SessionLocal()
+    dispatched = []
+    try:
+        due_schedules = crud.list_due_sourcing_schedules(db, now)
+        for db_schedule in due_schedules:
+            schedule = crud.sourcing_schedule_to_pydantic(db_schedule)
+
+            # Skip if a job for this schedule is already running.
+            running = (
+                db.query(db_models.SourcingJob)
+                .filter(
+                    db_models.SourcingJob.schedule_id == schedule.id,
+                    db_models.SourcingJob.status == "running",
+                )
+                .first()
+            )
+            if running:
+                logger.info(
+                    "founder_pool.dispatch_sourcing_jobs.skip_running schedule_id=%s",
+                    schedule.id,
+                )
+                continue
+
+            job_id = run_sourcing_job(schedule.thesis_id)
+            next_run = now + timedelta(seconds=schedule.interval_seconds)
+            crud.update_sourcing_schedule(
+                db,
+                schedule.id,
+                {
+                    "last_run_at": now,
+                    "next_run_at": next_run,
+                },
+            )
+            dispatched.append(
+                {
+                    "schedule_id": schedule.id,
+                    "thesis_id": schedule.thesis_id,
+                    "job_id": job_id,
+                    "next_run_at": next_run.isoformat(),
+                }
+            )
+
+        logger.info(
+            "founder_pool.dispatch_sourcing_jobs.end dispatched=%s",
+            len(dispatched),
+        )
+        return {"dispatched": dispatched, "now": now.isoformat()}
+    finally:
         db.close()
 
 
@@ -194,9 +348,10 @@ def refresh_pool_task(
     geographies: Optional[List[str]] = None,
     risk_appetite: str = "moderate",
     thesis_id: Optional[str] = None,
+    job_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Celery task that refreshes the founder pool with AI-sourced recommendations."""
-    logger.info("founder_pool.refresh_pool_task.start task_id=%s", self.request.id)
+    logger.info("founder_pool.refresh_pool_task.start task_id=%s job_id=%s", self.request.id, job_id)
     try:
         pool = refresh_founder_pool(
             sectors=sectors,
@@ -204,6 +359,7 @@ def refresh_pool_task(
             geographies=geographies,
             risk_appetite=risk_appetite,
             thesis_id=thesis_id,
+            job_id=job_id,
         )
     except Exception as exc:
         logger.error("founder_pool.refresh_pool_task.error error=%s", exc)

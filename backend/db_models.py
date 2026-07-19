@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, Float
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, Float
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -162,6 +162,7 @@ class Claim(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     opportunity_id: Mapped[str] = mapped_column(String, ForeignKey("opportunities.id", ondelete="CASCADE"), nullable=False, index=True)
+    founder_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("founders.id", ondelete="CASCADE"), nullable=True, index=True)
     claim: Mapped[str] = mapped_column(Text, nullable=False)
     source: Mapped[str] = mapped_column(String, nullable=False)
     trust_status: Mapped[str] = mapped_column(String, nullable=False)
@@ -169,3 +170,35 @@ class Claim(Base):
     contradiction: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     owner: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     next_action: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class SourcingSchedule(Base):
+    __tablename__ = "sourcing_schedules"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    thesis_id: Mapped[str] = mapped_column(String, ForeignKey("theses.id", ondelete="CASCADE"), nullable=False, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=3600)
+    max_leads_per_run: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utc_now, onupdate=_utc_now
+    )
+
+
+class SourcingJob(Base):
+    __tablename__ = "sourcing_jobs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    thesis_id: Mapped[str] = mapped_column(String, ForeignKey("theses.id", ondelete="CASCADE"), nullable=False, index=True)
+    schedule_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("sourcing_schedules.id", ondelete="SET NULL"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    leads_found: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    leads_added: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    leads_skipped: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now)

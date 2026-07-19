@@ -1,10 +1,10 @@
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -36,6 +36,8 @@ from models import (
     SocialMediaBackground,
     FounderPoolItem,
     PoolItemStatus,
+    SourcingSchedule,
+    SourcingJob,
 )
 from scoring import calculate_founder_score
 from research import UmansClient, create_founder_from_research, evidence_from_llm
@@ -48,7 +50,9 @@ from tasks.founder_pool import (
     refresh_pool_task,
     load_founder_pool,
     save_founder_pool,
+    run_sourcing_job,
 )
+from tasks.document_extraction import extract_document
 
 app = FastAPI(title="FounderOS API", version="0.1.0")
 
@@ -97,6 +101,19 @@ class ResearchFounderRequest(BaseModel):
     query: str
     channels: List[str] = ["linkedin", "twitter", "github", "news", "company_blog"]
     auto_score: bool = True
+
+
+class CreateSourcingScheduleRequest(BaseModel):
+    thesis_id: str
+    enabled: bool = True
+    interval_seconds: int = 3600
+    max_leads_per_run: int = 10
+
+
+class UpdateSourcingScheduleRequest(BaseModel):
+    enabled: Optional[bool] = None
+    interval_seconds: Optional[int] = None
+    max_leads_per_run: Optional[int] = None
 
 
 @app.get("/health")
@@ -772,7 +789,7 @@ def seed_demo(db: Session = Depends(get_db)):
 
     # Clear tables in a safe order.
     from sqlalchemy import text
-    db.execute(text("TRUNCATE claims, opportunities, score_snapshots, evidence_items, social_media_backgrounds, founder_pool_items, theses, founders CASCADE"))
+    db.execute(text("TRUNCATE sourcing_jobs, sourcing_schedules, claims, opportunities, score_snapshots, evidence_items, social_media_backgrounds, founder_pool_items, theses, founders CASCADE"))
     db.commit()
 
     # Create thesis
@@ -836,6 +853,159 @@ def seed_demo(db: Session = Depends(get_db)):
         "opportunity_id": opp_id,
         "message": "Demo seeded. Founder score is near neutral with low confidence and clear unknowns.",
     }
+
+
+@app.post("/v1/opportunities/{opportunity_id}/deck")
+def upload_deck(
+    opportunity_id: str,
+    file: UploadFile = File(...),
+    founder_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Upload a deck (PDF/DOCX/TXT/MD), extract claims and evidence via AI, and discard the file.
+
+    The file itself is not stored; only the structured extraction is persisted.
+    """
+    logger.info(
+        "endpoint.upload_deck.start opportunity_id=%s founder_id=%s filename=%s content_type=%s",
+        opportunity_id,
+        founder_id,
+        file.filename,
+        file.content_type,
+    )
+
+    db_opp = crud.get_opportunity(db, opportunity_id)
+    if not db_opp:
+        logger.warning("endpoint.upload_deck.opportunity_not_found opportunity_id=%s", opportunity_id)
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+
+    if founder_id:
+        db_founder = crud.get_founder(db, founder_id)
+        if not db_founder:
+            logger.warning("endpoint.upload_deck.founder_not_found founder_id=%s", founder_id)
+            raise HTTPException(status_code=404, detail="Founder not found")
+
+    file_bytes = file.file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    import base64
+
+    task = extract_document.delay(
+        base64.b64encode(file_bytes).decode("utf-8"),
+        filename=file.filename or "document",
+        opportunity_id=opportunity_id,
+        founder_id=founder_id,
+    )
+    logger.info(
+        "endpoint.upload_deck.queued opportunity_id=%s task_id=%s",
+        opportunity_id,
+        task.id,
+    )
+    return {
+        "opportunity_id": opportunity_id,
+        "founder_id": founder_id,
+        "task_id": task.id,
+        "status": "queued",
+    }
+
+
+@app.get("/v1/sourcing/schedules", response_model=List[SourcingSchedule])
+def list_sourcing_schedules(db: Session = Depends(get_db)):
+    db_schedules = crud.list_sourcing_schedules(db)
+    logger.info("endpoint.list_sourcing_schedules count=%s", len(db_schedules))
+    return [crud.sourcing_schedule_to_pydantic(s) for s in db_schedules]
+
+
+@app.post("/v1/sourcing/schedules", response_model=SourcingSchedule)
+def create_sourcing_schedule(
+    req: CreateSourcingScheduleRequest, db: Session = Depends(get_db)
+):
+    db_thesis = crud.get_thesis(db, req.thesis_id)
+    if not db_thesis:
+        raise HTTPException(status_code=404, detail="Thesis not found")
+
+    existing = crud.get_sourcing_schedule_by_thesis(db, req.thesis_id)
+    if existing:
+        raise HTTPException(status_code=400, detail="Sourcing schedule already exists for this thesis")
+
+    schedule_id = f"sch_{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc)
+    schedule = SourcingSchedule(
+        id=schedule_id,
+        thesis_id=req.thesis_id,
+        enabled=req.enabled,
+        interval_seconds=req.interval_seconds,
+        max_leads_per_run=req.max_leads_per_run,
+        next_run_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    db_schedule = crud.create_sourcing_schedule(db, schedule)
+    logger.info(
+        "endpoint.create_sourcing_schedule schedule_id=%s thesis_id=%s interval=%s",
+        schedule_id,
+        req.thesis_id,
+        req.interval_seconds,
+    )
+    return crud.sourcing_schedule_to_pydantic(db_schedule)
+
+
+@app.get("/v1/sourcing/schedules/{schedule_id}", response_model=SourcingSchedule)
+def get_sourcing_schedule(schedule_id: str, db: Session = Depends(get_db)):
+    db_schedule = crud.get_sourcing_schedule(db, schedule_id)
+    if not db_schedule:
+        raise HTTPException(status_code=404, detail="Sourcing schedule not found")
+    return crud.sourcing_schedule_to_pydantic(db_schedule)
+
+
+@app.put("/v1/sourcing/schedules/{schedule_id}", response_model=SourcingSchedule)
+def update_sourcing_schedule(
+    schedule_id: str, req: UpdateSourcingScheduleRequest, db: Session = Depends(get_db)
+):
+    db_schedule = crud.get_sourcing_schedule(db, schedule_id)
+    if not db_schedule:
+        raise HTTPException(status_code=404, detail="Sourcing schedule not found")
+
+    updates = req.model_dump(exclude_unset=True)
+    if not updates:
+        return crud.sourcing_schedule_to_pydantic(db_schedule)
+
+    db_schedule = crud.update_sourcing_schedule(db, schedule_id, updates)
+    logger.info("endpoint.update_sourcing_schedule schedule_id=%s updates=%s", schedule_id, updates)
+    return crud.sourcing_schedule_to_pydantic(db_schedule)
+
+
+@app.delete("/v1/sourcing/schedules/{schedule_id}")
+def delete_sourcing_schedule(schedule_id: str, db: Session = Depends(get_db)):
+    deleted = crud.delete_sourcing_schedule(db, schedule_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Sourcing schedule not found")
+    logger.info("endpoint.delete_sourcing_schedule schedule_id=%s", schedule_id)
+    return {"id": schedule_id, "deleted": True}
+
+
+@app.post("/v1/theses/{thesis_id}/source-now")
+def source_now(thesis_id: str, db: Session = Depends(get_db)):
+    """Manually trigger a sourcing job for a thesis."""
+    db_thesis = crud.get_thesis(db, thesis_id)
+    if not db_thesis:
+        raise HTTPException(status_code=404, detail="Thesis not found")
+
+    job_id = run_sourcing_job(thesis_id)
+    logger.info("endpoint.source_now thesis_id=%s job_id=%s", thesis_id, job_id)
+    return {"thesis_id": thesis_id, "job_id": job_id, "status": "queued"}
+
+
+@app.get("/v1/sourcing/jobs", response_model=List[SourcingJob])
+def list_sourcing_jobs(
+    thesis_id: Optional[str] = None,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    db_jobs = crud.list_sourcing_jobs(db, thesis_id=thesis_id, status=status)
+    logger.info("endpoint.list_sourcing_jobs count=%s", len(db_jobs))
+    return [crud.sourcing_job_to_pydantic(j) for j in db_jobs]
 
 
 if __name__ == "__main__":

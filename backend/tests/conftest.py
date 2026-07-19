@@ -16,7 +16,8 @@ from fastapi.testclient import TestClient
 from database import Base, SessionLocal, engine, get_db
 from main import app
 
-# Ensure all tables exist in the test database.
+# Recreate all tables in the test database from the current SQLAlchemy models.
+Base.metadata.drop_all(bind=engine)
 Base.metadata.create_all(bind=engine)
 
 
