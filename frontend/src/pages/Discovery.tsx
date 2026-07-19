@@ -2,7 +2,58 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search, Loader2, ArrowUpRight } from "lucide-react";
 import { api } from "@/api/client";
-import type { BackendFounder, BackendOpportunity } from "@/types/backend";
+import type { BackendFounder, BackendOpportunity, BackendDimensionBreakdown } from "@/types/backend";
+
+const DIM_SHORT_LABELS: Record<string, string> = {
+  execution: "EXE",
+  learning: "LRN",
+  customer_selling: "SELL",
+  judgment: "JDG",
+  leadership: "LEAD",
+  ownership: "OWN",
+  claim_reliability: "REL",
+};
+
+const DIM_FULL_LABELS: Record<string, string> = {
+  execution: "Execution",
+  learning: "Learning",
+  customer_selling: "Customer selling",
+  judgment: "Judgment",
+  leadership: "Leadership",
+  ownership: "Ownership",
+  claim_reliability: "Claim reliability",
+};
+
+const DIM_ORDER = [
+  "execution",
+  "learning",
+  "customer_selling",
+  "judgment",
+  "leadership",
+  "ownership",
+  "claim_reliability",
+];
+
+function scoreColor(score: number | null): string {
+  if (score === null) return "text-concrete bg-concrete/10 border-concrete/20";
+  if (score >= 75) return "text-verified bg-verified/10 border-verified/20";
+  if (score >= 55) return "text-action bg-action/10 border-action/20";
+  if (score >= 45) return "text-uncertain bg-uncertain/10 border-uncertain/20";
+  return "text-contradiction bg-contradiction/10 border-contradiction/20";
+}
+
+function barColor(score: number | null): string {
+  if (score === null) return "bg-concrete/30";
+  if (score >= 75) return "bg-verified";
+  if (score >= 55) return "bg-action";
+  if (score >= 45) return "bg-uncertain";
+  return "bg-contradiction";
+}
+
+function orderedDimensions(breakdowns: BackendDimensionBreakdown[] = []): BackendDimensionBreakdown[] {
+  const byKey = new Map(breakdowns.map((b) => [b.dimension, b]));
+  return DIM_ORDER.map((dim) => byKey.get(dim)).filter((b): b is BackendDimensionBreakdown => Boolean(b));
+}
 
 export default function Discovery() {
   const navigate = useNavigate();
@@ -99,7 +150,8 @@ export default function Discovery() {
               <tr>
                 <th className="px-4 py-3 font-sans font-semibold text-ink">Founder</th>
                 <th className="px-4 py-3 font-sans font-semibold text-ink">Idea / why they surfaced</th>
-                <th className="px-4 py-3 font-sans font-semibold text-ink">Score</th>
+                <th className="px-4 py-3 font-sans font-semibold text-ink">Dimension scores</th>
+                <th className="px-4 py-3 font-sans font-semibold text-ink">Founder score</th>
                 <th className="px-4 py-3 font-sans font-semibold text-ink">Confidence</th>
                 <th className="px-4 py-3 font-sans font-semibold text-ink"></th>
               </tr>
@@ -108,10 +160,11 @@ export default function Discovery() {
               {rows.map((founder) => {
                 const opp = opportunities[founder.id];
                 const snapshot = founder.latest_score_snapshot;
-                const score = snapshot ? Math.round(snapshot.founder_score) : "—";
-                const confidence = snapshot
-                  ? `${Math.round(snapshot.overall_confidence * 100)}%`
-                  : "—";
+                const score = snapshot ? Math.round(snapshot.founder_score) : null;
+                const confidence = snapshot ? snapshot.overall_confidence : null;
+                const confidencePct = confidence !== null ? Math.round(confidence * 100) : null;
+                const trend = snapshot?.trend ?? 0;
+                const dimensions = orderedDimensions(snapshot?.dimension_breakdowns);
                 const link = opp ? `/cases/${opp.opportunity_id}` : "/cases";
                 return (
                   <tr
@@ -138,17 +191,77 @@ export default function Discovery() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <p className="max-w-md truncate text-ink/80">
+                      <p className="max-w-xs truncate text-ink/80">
                         {founder.source_reason || "No reason provided."}
                       </p>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="font-display text-lg font-bold tabular text-ink">{score}</span>
+                      {dimensions.length === 0 ? (
+                        <span className="text-xs text-concrete">No dimensions scored</span>
+                      ) : (
+                        <div className="flex flex-wrap gap-1.5 max-w-[280px]">
+                          {dimensions.map((d) => {
+                            const dimScore = d.unknown ? null : Math.round(d.adjusted_score);
+                            return (
+                              <span
+                                key={d.dimension}
+                                title={`${DIM_FULL_LABELS[d.dimension] ?? d.dimension}: ${
+                                  dimScore === null ? "unknown" : dimScore
+                                } (confidence ${Math.round(d.confidence * 100)}%)`}
+                                className={`rounded-sm border px-1.5 py-0.5 text-[10px] font-mono font-semibold tabular ${scoreColor(dimScore)}`}
+                              >
+                                {DIM_SHORT_LABELS[d.dimension] ?? d.dimension.slice(0, 4).toUpperCase()}{" "}
+                                {dimScore ?? "—"}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3">
-                      <span className="font-display text-lg font-bold tabular text-ink">
-                        {confidence}
-                      </span>
+                      {score === null ? (
+                        <span className="font-mono text-sm text-concrete">—</span>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <div className="flex flex-col items-end">
+                            <span className="font-display text-base font-bold tabular text-ink">
+                              {score}
+                            </span>
+                            {trend !== 0 && (
+                              <span
+                                className={`text-[10px] font-mono font-semibold tabular ${
+                                  trend > 0 ? "text-verified" : "text-contradiction"
+                                }`}
+                              >
+                                {trend > 0 ? `+${trend}` : trend}
+                              </span>
+                            )}
+                          </div>
+                          <div className="h-1.5 w-12 overflow-hidden rounded-full bg-concrete/15">
+                            <div
+                              className={`h-full ${barColor(score)}`}
+                              style={{ width: `${score}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {confidencePct === null ? (
+                        <span className="font-mono text-sm text-concrete">—</span>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <span className="font-display text-base font-bold tabular text-ink">
+                            {confidencePct}%
+                          </span>
+                          <div className="h-1.5 w-12 overflow-hidden rounded-full bg-concrete/15">
+                            <div
+                              className="h-full bg-concrete/50"
+                              style={{ width: `${confidencePct}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <ArrowUpRight
