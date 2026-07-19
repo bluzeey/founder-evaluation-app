@@ -4,7 +4,7 @@ import { caseB } from "@/data/demoCases";
 
 describe("history", () => {
   it("preserves the previous snapshot when an event is applied", () => {
-    const previous = JSON.stringify(caseB);
+    const original = JSON.parse(JSON.stringify(caseB));
     const event = {
       id: "evt-history-test",
       entityId: caseB.id,
@@ -12,13 +12,18 @@ describe("history", () => {
       effectiveAt: new Date().toISOString(),
       observedAt: new Date().toISOString(),
       sourceRefIds: ["src-b-form"],
-      affectedDrivers: ["TRACTION"] as import("@/domain/types").DriverKey[],      previousValues: { TRACTION: 55 },
+      affectedDrivers: ["TRACTION"] as import("@/domain/types").DriverKey[],
+      previousValues: { TRACTION: 55 },
       newValues: { TRACTION: 70 },
       explanation: "Test traction update",
     };
-    applyEvent(caseB, event);
-    const next = JSON.stringify(caseB);
-    expect(previous).not.toEqual(next);
-    expect(caseB.history).toContainEqual(event);
+    const updated = applyEvent(caseB, event);
+
+    // Original fixture must remain unchanged (immutable snapshot).
+    expect(JSON.stringify(caseB)).toEqual(JSON.stringify(original));
+
+    // Updated case contains the new event and a changed history.
+    expect(updated.history).toContainEqual(event);
+    expect(updated.history?.length).toBeGreaterThan(original.history?.length ?? 0);
   });
 });

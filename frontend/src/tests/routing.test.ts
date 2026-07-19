@@ -54,6 +54,7 @@ describe("routing", () => {
 
 describe("history", () => {
   it("previous history snapshot remains unchanged after an event", () => {
+    const original = JSON.parse(JSON.stringify(caseA));
     const before = caseA.history ? [...caseA.history] : [];
     const event = {
       id: "evt-test",
@@ -62,14 +63,19 @@ describe("history", () => {
       effectiveAt: new Date().toISOString(),
       observedAt: new Date().toISOString(),
       sourceRefIds: [],
-      affectedDrivers: [],
+      affectedDrivers: [] as import("@/domain/types").DriverKey[],
       previousValues: {},
       newValues: {},
       explanation: "Test event",
     };
-    applyEvent(caseA, event);
-    expect(caseA.history).not.toEqual(before);
-    expect(before.length).toBeGreaterThanOrEqual(0);
+    const updated = applyEvent(caseA, event);
+
+    // Original fixture must remain unchanged (immutable snapshot).
+    expect(JSON.stringify(caseA)).toEqual(JSON.stringify(original));
+
+    // Updated case contains the new event.
+    expect(updated.history).not.toEqual(before);
+    expect(updated.history).toContainEqual(event);
   });
 });
 
