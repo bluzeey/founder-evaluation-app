@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { Search, Loader2, ArrowRight } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Search, Loader2, ArrowUpRight } from "lucide-react";
 import { api } from "@/api/client";
 import type { BackendFounder, BackendOpportunity } from "@/types/backend";
 
 export default function Discovery() {
+  const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [founders, setFounders] = useState<BackendFounder[]>([]);
   const [opportunities, setOpportunities] = useState<Record<string, BackendOpportunity>>({});
@@ -51,13 +52,7 @@ export default function Discovery() {
     const q = query.toLowerCase();
     return founders.filter((f) => {
       if (!q) return true;
-      const text = [
-        f.name,
-        f.current_company,
-        f.role,
-        f.location,
-        f.source_reason,
-      ]
+      const text = [f.name, f.current_company, f.role, f.location, f.source_reason]
         .join(" ")
         .toLowerCase();
       return text.includes(q);
@@ -71,7 +66,7 @@ export default function Discovery() {
           <div className="label mb-1">Discovery</div>
           <h1 className="text-2xl font-bold text-ink">All sourced founders</h1>
           <p className="text-sm text-concrete">
-            Every AI-sourced lead becomes a founder case. Click a card to see the detailed breakdown.
+            Every AI-sourced lead becomes a founder case. Click a row to see the detailed breakdown.
           </p>
         </div>
       </div>
@@ -98,85 +93,74 @@ export default function Discovery() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          {rows.map((founder) => {
-            const opp = opportunities[founder.id];
-            const snapshot = founder.latest_score_snapshot;
-            const score = snapshot ? Math.round(snapshot.founder_score) : undefined;
-            const confidence = snapshot
-              ? `${Math.round(snapshot.overall_confidence * 100)}%`
-              : "—";
-            const link = opp ? `/cases/${opp.opportunity_id}` : "/cases";
-            return (
-              <Link
-                key={founder.id}
-                to={link}
-                className="index-card group flex flex-col gap-4 border-l-4 border-l-action hover:border-l-action/80"
-              >
-                <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-manila font-display text-sm font-bold text-ink">
-                    {founder.name
-                      .split(" ")
-                      .map((n) => n[0])
-                      .join("")
-                      .slice(0, 2)}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-sans font-semibold text-ink">{founder.name}</h3>
-                    </div>
-                    <div className="mt-0.5 text-sm text-concrete truncate">
-                      {founder.current_company || "—"} · {founder.role || "—"} ·{" "}
-                      {founder.location || "—"}
-                    </div>
-                    {founder.source_url && (
-                      <a
-                        href={founder.source_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="mt-1 block truncate text-xs text-action hover:underline"
-                      >
-                        {founder.source_url}
-                      </a>
-                    )}
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <div className="label">Idea / why they surfaced</div>
-                  <p className="text-sm font-medium text-ink line-clamp-3">
-                    {founder.source_reason || "No reason provided."}
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-sm border border-concrete/20 bg-manila/30 p-3">
-                    <div className="label">Founder score</div>
-                    <div className="mt-1 font-display text-xl font-bold tabular text-ink">
-                      {score ?? "—"}
-                    </div>
-                  </div>
-                  <div className="rounded-sm border border-concrete/20 bg-manila/30 p-3">
-                    <div className="label">Confidence</div>
-                    <div className="mt-1 font-display text-xl font-bold tabular text-ink">
-                      {confidence}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between border-t border-concrete/10 pt-3">
-                  <span className="text-xs text-concrete group-hover:text-action">
-                    View detailed breakdown
-                  </span>
-                  <ArrowRight
-                    size={16}
-                    className="text-concrete transition-colors group-hover:text-action"
-                  />
-                </div>
-              </Link>
-            );
-          })}
+        <div className="overflow-x-auto rounded-sm border border-concrete/20 bg-paper shadow-paper">
+          <table className="w-full text-left text-sm">
+            <thead className="border-b border-concrete/20 bg-manila/30">
+              <tr>
+                <th className="px-4 py-3 font-sans font-semibold text-ink">Founder</th>
+                <th className="px-4 py-3 font-sans font-semibold text-ink">Idea / why they surfaced</th>
+                <th className="px-4 py-3 font-sans font-semibold text-ink">Score</th>
+                <th className="px-4 py-3 font-sans font-semibold text-ink">Confidence</th>
+                <th className="px-4 py-3 font-sans font-semibold text-ink"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-concrete/10">
+              {rows.map((founder) => {
+                const opp = opportunities[founder.id];
+                const snapshot = founder.latest_score_snapshot;
+                const score = snapshot ? Math.round(snapshot.founder_score) : "—";
+                const confidence = snapshot
+                  ? `${Math.round(snapshot.overall_confidence * 100)}%`
+                  : "—";
+                const link = opp ? `/cases/${opp.opportunity_id}` : "/cases";
+                return (
+                  <tr
+                    key={founder.id}
+                    onClick={() => navigate(link)}
+                    className="cursor-pointer transition-colors hover:bg-manila/20"
+                  >
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-manila font-display text-sm font-bold text-ink">
+                          {founder.name
+                            .split(" ")
+                            .map((n) => n[0])
+                            .join("")
+                            .slice(0, 2)}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-sans font-semibold text-ink">{founder.name}</div>
+                          <div className="text-xs text-concrete truncate">
+                            {founder.current_company || "—"} · {founder.role || "—"} ·{" "}
+                            {founder.location || "—"}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <p className="max-w-md truncate text-ink/80">
+                        {founder.source_reason || "No reason provided."}
+                      </p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="font-display text-lg font-bold tabular text-ink">{score}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="font-display text-lg font-bold tabular text-ink">
+                        {confidence}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <ArrowUpRight
+                        size={16}
+                        className="text-concrete transition-colors hover:text-action"
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
 
         {rows.length === 0 && (
