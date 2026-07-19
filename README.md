@@ -147,18 +147,43 @@ DATABASE_URL=postgresql://postgres:password@localhost:5432/founderos
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
 
+# Use a Wallet key for deployed/production backends. Personal Plan keys are
+# throttled and deprioritized for unattended automation.
 UMANS_API_KEY=sk-your-umans-api-key
+
 UMANS_MODEL=umans-coder
 UMANS_SOCIAL_MODEL=umans-coder
 UMANS_DOCUMENT_MODEL=umans-coder
 UMANS_WEBSEARCH_PROVIDER=native
 UMANS_RESEARCH_TIMEOUT=60
 
+# Per-agent web search toggles. Sourcing keeps web search for real-time
+# discovery; social research defaults to false because it already receives URLs.
+UMANS_ENABLE_WEB_SEARCH_SOURCING=true
+UMANS_ENABLE_WEB_SEARCH_SOCIAL=false
+UMANS_ENABLE_WEB_SEARCH_RESEARCH=true
+
+# Global serialization lock: only one Umans request in flight at a time.
+UMANS_API_LOCK_DISABLED=false
+UMANS_API_LOCK_TTL_SECONDS=120
+
+# Circuit breaker pauses all Umans calls after repeated 429/5xx errors.
+UMANS_CIRCUIT_BREAKER_FAILURE_THRESHOLD=3
+UMANS_CIRCUIT_BREAKER_COOLDOWN_SECONDS=600
+
 SOURCING_DISPATCH_INTERVAL_SECONDS=60
 POOL_LOCK_TTL_SECONDS=300
 ```
 
 The deterministic score engine does not call an LLM; only the evidence extraction, grading, and memo agents do.
+
+### Avoiding Umans 429/overloaded errors in production
+
+1. **Use a Wallet key**: The deployed backend is unattended automation, so it should use a Wallet API key (billed per token). Personal Plan keys have concurrency and request-window limits designed for interactive coding.
+2. **Serialize calls**: `UMANS_API_LOCK_*` settings ensure only one Umans request is in flight at a time across sourcing, social research, and document extraction.
+3. **Disable web search where it is not needed**: `UMANS_ENABLE_WEB_SEARCH_SOCIAL=false` avoids redundant searches when LinkedIn/GitHub URLs are already provided.
+4. **Use the circuit breaker**: After `UMANS_CIRCUIT_BREAKER_FAILURE_THRESHOLD` consecutive retryable failures, all new Umans calls are rejected for `UMANS_CIRCUIT_BREAKER_COOLDOWN_SECONDS` to stop retry storms.
+5. **Slow down retries**: Increase `MIN_RETRY_DELAY_SECONDS` and `*_RETRY_BASE_DELAY` if the API keeps returning `overloaded_error`.
 
 ## Hackathon demonstrator flow
 

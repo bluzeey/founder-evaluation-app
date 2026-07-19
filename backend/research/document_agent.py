@@ -8,6 +8,7 @@ import httpx
 
 from .http_utils import raise_for_status
 from .prompts import DOCUMENT_EXTRACTION_SYSTEM_PROMPT
+from .umans_lock import umans_api_lock
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,8 @@ class DocumentAgent:
 
         with httpx.Client(timeout=self.timeout) as client:
             logger.info("document_agent.extract.request model=%s", self.model)
-            response = client.post(UMANS_BASE_URL, headers=headers, json=payload)
+            with umans_api_lock():
+                response = client.post(UMANS_BASE_URL, headers=headers, json=payload)
             raise_for_status(response)
             data = response.json()
 

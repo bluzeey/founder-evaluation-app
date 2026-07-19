@@ -4,6 +4,8 @@ from typing import Any
 
 import httpx
 
+from .umans_lock import record_umans_failure, record_umans_success
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,9 +32,16 @@ def log_http_error(response: httpx.Response) -> None:
 
 
 def raise_for_status(response: httpx.Response) -> None:
-    """Like httpx.Response.raise_for_status, but logs the response body on errors."""
+    """Like httpx.Response.raise_for_status, but logs the response body on errors.
+
+    Also updates the shared circuit-breaker counters: successes reset the failure
+    counter; retryable failures increment it.
+    """
     try:
         response.raise_for_status()
+        record_umans_success()
     except httpx.HTTPStatusError as exc:
         log_http_error(response)
+        if is_retryable_status(response.status_code):
+            record_umans_failure()
         raise

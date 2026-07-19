@@ -6,8 +6,9 @@ from typing import Any, List, Optional
 
 import httpx
 
-from .http_utils import is_retryable_status, raise_for_status
+from .http_utils import raise_for_status
 from .prompts import SOURCING_SYSTEM_PROMPT
+from .umans_lock import is_web_search_enabled, umans_api_lock
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +36,8 @@ class SourcingAgent:
         self.model = model or os.environ.get("UMANS_SOURCING_MODEL", "umans-coder")
         self.timeout = float(timeout or os.environ.get("UMANS_RESEARCH_TIMEOUT", "60"))
         self.max_tokens = int(os.environ.get("UMANS_MAX_TOKENS", "8000"))
-        self.enable_web_search = os.environ.get("UMANS_ENABLE_WEB_SEARCH", "true").lower() in (
-            "true",
-            "1",
-            "yes",
+        self.enable_web_search = is_web_search_enabled(
+            "UMANS_ENABLE_WEB_SEARCH_SOURCING", "true"
         )
 
         logger.info(
@@ -121,7 +120,8 @@ class SourcingAgent:
                 self.model,
                 self.enable_web_search,
             )
-            response = client.post(UMANS_BASE_URL, headers=headers, json=payload)
+            with umans_api_lock():
+                response = client.post(UMANS_BASE_URL, headers=headers, json=payload)
             raise_for_status(response)
             data = response.json()
 

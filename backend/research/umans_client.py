@@ -8,6 +8,7 @@ import httpx
 
 from .http_utils import raise_for_status
 from .prompts import FOUNDER_RESEARCH_SYSTEM_PROMPT
+from .umans_lock import is_web_search_enabled, umans_api_lock
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +35,8 @@ class UmansClient:
         self.model = model or os.environ.get("UMANS_MODEL", "umans-coder")
         self.timeout = float(timeout or os.environ.get("UMANS_RESEARCH_TIMEOUT", "60"))
         self.max_tokens = int(os.environ.get("UMANS_MAX_TOKENS", "8000"))
-        self.enable_web_search = os.environ.get("UMANS_ENABLE_WEB_SEARCH", "true").lower() in (
-            "true",
-            "1",
-            "yes",
+        self.enable_web_search = is_web_search_enabled(
+            "UMANS_ENABLE_WEB_SEARCH_RESEARCH", "true"
         )
 
         logger.info(
@@ -88,7 +87,8 @@ class UmansClient:
 
         with httpx.Client(timeout=self.timeout) as client:
             logger.info("umans_client.research.request query=%s model=%s enable_web_search=%s", query, self.model, self.enable_web_search)
-            response = client.post(UMANS_BASE_URL, headers=headers, json=payload)
+            with umans_api_lock():
+                response = client.post(UMANS_BASE_URL, headers=headers, json=payload)
             raise_for_status(response)
             data = response.json()
 
