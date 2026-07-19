@@ -60,7 +60,7 @@ founder-evaluation-app/
 
 - **Frontend:** Desktop-first investor interface and mobile-friendly founder assessment workspace.
 - **Backend:** FastAPI application that owns data models, evidence normalization, deterministic scoring, and workflow endpoints.
-- **AI layer:** Agents for ingestion, gap planning, assessment conduction, independent grading, diligence validation, and memo generation. Model calls are routed through environment variables and can be powered by **Umans AI** (`umans-coder` / `umans-kimi-k2.7`). The deterministic score calculation itself lives in Python code, not in an LLM.
+- **AI layer:** Agents for ingestion, gap planning, assessment conduction, independent grading, diligence validation, and memo generation. Model calls are routed through environment variables and use **OpenAI** (`gpt-5`) with **Tavily** for real-time web search. The deterministic score calculation itself lives in Python code, not in an LLM.
 - **Memory layer:** Founder Score persists across ventures; opportunity axes (Founder-Market Fit, Team Completeness, Market, Idea-vs-Market) are contextual.
 
 ## Founder Score outputs
@@ -183,13 +183,13 @@ POOL_LOCK_TTL_SECONDS=300
 
 The deterministic score engine does not call an LLM; only the evidence extraction, grading, and memo agents do.
 
-### Avoiding Umans 429/overloaded errors in production
+### Avoiding API rate limits in production
 
-1. **Use a Wallet key**: The deployed backend is unattended automation, so it should use a Wallet API key (billed per token). Personal Plan keys have concurrency and request-window limits designed for interactive coding.
-2. **Serialize calls**: `UMANS_API_LOCK_*` settings ensure only one Umans request is in flight at a time across sourcing, social research, and document extraction.
-3. **Disable web search where it is not needed**: `UMANS_ENABLE_WEB_SEARCH_SOCIAL=false` avoids redundant searches when LinkedIn/GitHub URLs are already provided.
-4. **Use the circuit breaker**: After `UMANS_CIRCUIT_BREAKER_FAILURE_THRESHOLD` consecutive retryable failures, all new Umans calls are rejected for `UMANS_CIRCUIT_BREAKER_COOLDOWN_SECONDS` to stop retry storms.
-5. **Slow down retries**: Increase `MIN_RETRY_DELAY_SECONDS` and `*_RETRY_BASE_DELAY` if the API keeps returning `overloaded_error`.
+1. **Use Tavily for web search**: Real-time search is handled by `TAVILY_API_KEY`, so OpenAI only does reasoning. This removes provider-specific web-search overload errors.
+2. **Serialize calls**: `API_LOCK_*` settings ensure only one OpenAI request is in flight at a time across sourcing, social research, and document extraction.
+3. **Disable web search where it is not needed**: `OPENAI_ENABLE_WEB_SEARCH_SOCIAL=false` avoids redundant searches when LinkedIn/GitHub URLs are already provided.
+4. **Use the circuit breaker**: After `CIRCUIT_BREAKER_FAILURE_THRESHOLD` consecutive retryable failures, all new OpenAI calls are rejected for `CIRCUIT_BREAKER_COOLDOWN_SECONDS` to stop retry storms.
+5. **Slow down retries**: Increase `MIN_RETRY_DELAY_SECONDS` and `*_RETRY_BASE_DELAY` if OpenAI keeps returning 429s.
 
 ## Hackathon demonstrator flow
 
