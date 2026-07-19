@@ -365,6 +365,7 @@ def pool_item_to_db(item: FounderPoolItem) -> db_models.FounderPoolItem:
         linkedin_url=item.linkedin_url,
         github_url=item.github_url,
         source_url=item.source_url,
+        source=item.source,
         reason=item.reason,
         thesis_id=item.thesis_id,
         job_id=item.job_id,
@@ -386,6 +387,7 @@ def pool_item_to_pydantic(db_item: db_models.FounderPoolItem) -> FounderPoolItem
         linkedin_url=db_item.linkedin_url,
         github_url=db_item.github_url,
         source_url=db_item.source_url,
+        source=db_item.source,
         reason=db_item.reason,
         thesis_id=db_item.thesis_id,
         job_id=db_item.job_id,
@@ -580,6 +582,7 @@ def sourcing_schedule_to_db(schedule: SourcingSchedule) -> db_models.SourcingSch
         enabled=schedule.enabled,
         interval_seconds=schedule.interval_seconds,
         max_leads_per_run=schedule.max_leads_per_run,
+        sources=[s.model_dump(mode="json") for s in schedule.sources] if schedule.sources else [],
         last_run_at=schedule.last_run_at,
         next_run_at=schedule.next_run_at,
         created_at=schedule.created_at,
@@ -588,12 +591,15 @@ def sourcing_schedule_to_db(schedule: SourcingSchedule) -> db_models.SourcingSch
 
 
 def sourcing_schedule_to_pydantic(db_schedule: db_models.SourcingSchedule) -> SourcingSchedule:
+    from models import SourceConfig
+
     return SourcingSchedule(
         id=db_schedule.id,
         thesis_id=db_schedule.thesis_id,
         enabled=db_schedule.enabled,
         interval_seconds=db_schedule.interval_seconds,
         max_leads_per_run=db_schedule.max_leads_per_run,
+        sources=[SourceConfig(**s) for s in db_schedule.sources] if db_schedule.sources else [],
         last_run_at=db_schedule.last_run_at,
         next_run_at=db_schedule.next_run_at,
         created_at=db_schedule.created_at,

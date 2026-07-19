@@ -38,6 +38,7 @@ from models import (
     PoolItemStatus,
     SourcingSchedule,
     SourcingJob,
+    SourceConfig,
 )
 from scoring import calculate_founder_score
 from research import UmansClient, create_founder_from_research, evidence_from_llm
@@ -106,14 +107,16 @@ class ResearchFounderRequest(BaseModel):
 class CreateSourcingScheduleRequest(BaseModel):
     thesis_id: str
     enabled: bool = True
-    interval_seconds: int = 3600
+    interval_seconds: int = 300
     max_leads_per_run: int = 10
+    sources: List[SourceConfig] = []
 
 
 class UpdateSourcingScheduleRequest(BaseModel):
     enabled: Optional[bool] = None
     interval_seconds: Optional[int] = None
     max_leads_per_run: Optional[int] = None
+    sources: Optional[List[SourceConfig]] = None
 
 
 @app.get("/health")
@@ -240,11 +243,18 @@ def refresh_founder_pool_endpoint(thesis_id: Optional[str] = None, db: Session =
     else:
         thesis = None
 
+    sources = None
+    if thesis_id:
+        db_schedule = crud.get_sourcing_schedule_by_thesis(db, thesis_id)
+        if db_schedule:
+            sources = [s.model_dump(mode="json") for s in crud.sourcing_schedule_to_pydantic(db_schedule).sources]
+
     task = refresh_pool_task.delay(
         sectors=thesis.sectors if thesis else None,
         stages=thesis.stages if thesis else None,
         geographies=thesis.geographies if thesis else None,
         risk_appetite=thesis.risk_appetite if thesis else "moderate",
+        sources=sources,
         thesis_id=thesis_id,
     )
     logger.info(
@@ -838,14 +848,20 @@ def seed_demo(db: Session = Depends(get_db)):
     )
 
     # Create a default recurring sourcing schedule for the thesis so the agent keeps collecting leads.
+    # Runs every 5 minutes with LinkedIn and Twitter keyword searches based on the thesis.
     schedule_id = f"sch_{uuid.uuid4().hex[:8]}"
     now = datetime.now(timezone.utc)
+    default_sources = [
+        SourceConfig(platform="linkedin", keywords=f"{', '.join(thesis.sectors)} founders {', '.join(thesis.geographies)}"),
+        SourceConfig(platform="twitter", keywords=f"{', '.join(thesis.sectors)} startup founder {', '.join(thesis.geographies)}"),
+    ]
     default_schedule = SourcingSchedule(
         id=schedule_id,
         thesis_id=thesis.id,
         enabled=True,
-        interval_seconds=3600,
+        interval_seconds=300,
         max_leads_per_run=10,
+        sources=default_sources,
         next_run_at=now,
         created_at=now,
         updated_at=now,
@@ -983,6 +999,7 @@ def create_sourcing_schedule(
         enabled=req.enabled,
         interval_seconds=req.interval_seconds,
         max_leads_per_run=req.max_leads_per_run,
+        sources=req.sources,
         next_run_at=now,
         created_at=now,
         updated_at=now,

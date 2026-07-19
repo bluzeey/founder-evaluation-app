@@ -143,11 +143,17 @@ export type BackendPoolItem = {
   linkedin_url?: string;
   github_url?: string;
   source_url?: string;
+  source?: string;
   reason: string;
   thesis_id?: string;
   job_id?: string;
   status: PoolItemStatus;
   created_at: string;
+};
+
+export type SourceConfig = {
+  platform: string;
+  keywords: string;
 };
 
 export type BackendSourcingSchedule = {
@@ -156,6 +162,7 @@ export type BackendSourcingSchedule = {
   enabled: boolean;
   interval_seconds: number;
   max_leads_per_run: number;
+  sources: SourceConfig[];
   last_run_at?: string;
   next_run_at?: string;
   created_at: string;
@@ -197,12 +204,14 @@ export type CreateSourcingScheduleRequest = {
   enabled?: boolean;
   interval_seconds?: number;
   max_leads_per_run?: number;
+  sources?: SourceConfig[];
 };
 
 export type UpdateSourcingScheduleRequest = {
   enabled?: boolean;
   interval_seconds?: number;
   max_leads_per_run?: number;
+  sources?: SourceConfig[];
 };
 
 export type CreateFounderRequest = {

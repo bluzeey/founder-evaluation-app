@@ -17,16 +17,23 @@ import type {
   ApiError,
 } from "@/types/backend";
 
-const API_BASE = "/api";
+const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) || "/api";
 
 async function handleResponse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    let message = `Request failed with status ${response.status}`;
-    try {
-      const body = (await response.json()) as { detail?: string };
-      if (body.detail) message = body.detail;
-    } catch {
-      // ignore body parse error
+  const contentType = response.headers.get("content-type") || "";
+  const isHtml = contentType.includes("text/html");
+  if (!response.ok || isHtml) {
+    let message: string;
+    if (isHtml) {
+      message = "Backend returned HTML instead of JSON. Check that the backend is running and VITE_API_URL is set correctly.";
+    } else {
+      message = `Request failed with status ${response.status}`;
+      try {
+        const body = (await response.json()) as { detail?: string };
+        if (body.detail) message = body.detail;
+      } catch {
+        // ignore body parse error
+      }
     }
     throw { status: response.status, message } as ApiError;
   }

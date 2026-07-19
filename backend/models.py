@@ -176,12 +176,18 @@ class Claim(BaseModel):
     next_action: Optional[str] = None
 
 
+class SourceConfig(BaseModel):
+    platform: str = "linkedin"  # linkedin, twitter, other
+    keywords: str = ""
+
+
 class SourcingSchedule(BaseModel):
     id: str
     thesis_id: str
     enabled: bool = True
     interval_seconds: int = 3600
     max_leads_per_run: int = 10
+    sources: List[SourceConfig] = []
     last_run_at: Optional[datetime] = None
     next_run_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -242,6 +248,7 @@ class FounderPoolItem(BaseModel):
     linkedin_url: Optional[str] = None
     github_url: Optional[str] = None
     source_url: Optional[str] = None
+    source: Optional[str] = None
     reason: str
     thesis_id: Optional[str] = None
     job_id: Optional[str] = None

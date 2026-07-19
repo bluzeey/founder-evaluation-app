@@ -114,6 +114,7 @@ def refresh_founder_pool(
     stages: Optional[List[str]] = None,
     geographies: Optional[List[str]] = None,
     risk_appetite: str = "moderate",
+    sources: Optional[List[dict[str, str]]] = None,
     thesis_id: Optional[str] = None,
     job_id: Optional[str] = None,
 ) -> List[FounderPoolItem]:
@@ -127,11 +128,12 @@ def refresh_founder_pool(
     geographies = geographies or ["Global"]
 
     logger.info(
-        "founder_pool.refresh.start sectors=%s stages=%s geographies=%s risk=%s thesis_id=%s job_id=%s",
+        "founder_pool.refresh.start sectors=%s stages=%s geographies=%s risk=%s sources=%s thesis_id=%s job_id=%s",
         sectors,
         stages,
         geographies,
         risk_appetite,
+        sources,
         thesis_id,
         job_id,
     )
@@ -163,6 +165,7 @@ def refresh_founder_pool(
             stages=stages,
             geographies=geographies,
             risk_appetite=risk_appetite,
+            sources=sources,
         )
 
         recommendations = result.get("recommendations", []) or []
@@ -181,6 +184,7 @@ def refresh_founder_pool(
         # Build a set of existing dedup keys across the whole pool.
         existing_keys = {_dedup_key(crud.pool_item_to_pydantic(item)) for item in existing}
 
+        default_source = sources[0].get("platform", "web") if sources else "web"
         new_items = []
         skipped = 0
         for rec in recommendations:
@@ -194,6 +198,7 @@ def refresh_founder_pool(
                 linkedin_url=rec.get("linkedin_url") or None,
                 github_url=rec.get("github_url") or None,
                 source_url=rec.get("source_url") or None,
+                source=(rec.get("source") or default_source) if sources else None,
                 reason=rec.get("reason", "") or "",
                 thesis_id=thesis_id,
                 job_id=job_id,
@@ -290,10 +295,15 @@ def run_sourcing_job(thesis_id: str) -> str:
             raise ValueError(f"Thesis not found: {thesis_id}")
         thesis = crud.thesis_to_pydantic(db_thesis)
 
+        # Prefer the active schedule for this thesis to get sources and interval context.
+        db_schedule = crud.get_sourcing_schedule_by_thesis(db, thesis_id)
+        schedule = crud.sourcing_schedule_to_pydantic(db_schedule) if db_schedule else None
+
         job_id = f"job_{uuid.uuid4().hex[:8]}"
         job = SourcingJob(
             id=job_id,
             thesis_id=thesis_id,
+            schedule_id=schedule.id if schedule else None,
             status="pending",
             created_at=datetime.now(timezone.utc),
         )
@@ -304,6 +314,7 @@ def run_sourcing_job(thesis_id: str) -> str:
             stages=thesis.stages,
             geographies=thesis.geographies,
             risk_appetite=thesis.risk_appetite,
+            sources=[s.model_dump(mode="json") for s in schedule.sources] if schedule and schedule.sources else None,
             thesis_id=thesis_id,
             job_id=job_id,
         )
@@ -383,17 +394,19 @@ def refresh_pool_task(
     stages: Optional[List[str]] = None,
     geographies: Optional[List[str]] = None,
     risk_appetite: str = "moderate",
+    sources: Optional[List[dict[str, str]]] = None,
     thesis_id: Optional[str] = None,
     job_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Celery task that refreshes the founder pool with AI-sourced recommendations."""
-    logger.info("founder_pool.refresh_pool_task.start task_id=%s job_id=%s", self.request.id, job_id)
+    logger.info("founder_pool.refresh_pool_task.start task_id=%s job_id=%s sources=%s", self.request.id, job_id, sources)
     try:
         pool = refresh_founder_pool(
             sectors=sectors,
             stages=stages,
             geographies=geographies,
             risk_appetite=risk_appetite,
+            sources=sources,
             thesis_id=thesis_id,
             job_id=job_id,
         )

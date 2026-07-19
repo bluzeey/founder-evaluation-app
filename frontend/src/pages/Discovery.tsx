@@ -73,7 +73,7 @@ export default function Discovery() {
   }, []);
 
   const rows = useMemo(() => {
-    const liveRows: Array<TalentSignal & { isInbound: boolean; live: boolean }> = livePool.map((item) => ({
+    const liveRows: Array<TalentSignal & { isInbound: boolean; live: boolean; source?: string }> = livePool.map((item) => ({
       id: item.id,
       person: item.name,
       currentProject: item.current_company,
@@ -89,6 +89,7 @@ export default function Discovery() {
       caseId: undefined,
       isInbound: false,
       live: true,
+      source: item.source,
     }));
     const talentRows: TalentSignal[] = TALENT_SIGNALS;
     const caseRows = DEMO_CASES.map((c) => ({
@@ -112,8 +113,8 @@ export default function Discovery() {
 
     const combined = [
       ...liveRows,
-      ...talentRows.map((t) => ({ ...t, isInbound: false, live: false })),
-      ...(caseRows as unknown as Array<TalentSignal & { isInbound: boolean; live: boolean }>),
+      ...talentRows.map((t) => ({ ...t, isInbound: false, live: false, source: undefined })),
+      ...(caseRows as unknown as Array<TalentSignal & { isInbound: boolean; live: boolean; source?: string }>),
     ].filter((row) => {
       const q = query.toLowerCase();
       const matchesQuery =
@@ -285,6 +286,11 @@ export default function Discovery() {
                       {row.live && (
                         <span className="rounded-sm bg-action/10 px-1.5 py-0.5 text-[10px] font-mono font-semibold uppercase text-action">
                           Live
+                        </span>
+                      )}
+                      {row.source && (
+                        <span className="rounded-sm bg-manila/50 px-1.5 py-0.5 text-[10px] font-mono font-semibold uppercase text-concrete">
+                          {row.source}
                         </span>
                       )}
                     </div>

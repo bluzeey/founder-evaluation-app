@@ -47,6 +47,7 @@ class SourcingAgent:
         stages: List[str],
         geographies: List[str],
         risk_appetite: str = "moderate",
+        sources: Optional[List[dict[str, str]]] = None,
     ) -> dict[str, Any]:
         """Discover founders matching the given thesis parameters.
 
@@ -55,16 +56,18 @@ class SourcingAgent:
             stages: Target stages, e.g. ["pre-seed", "seed"].
             geographies: Target geographies, e.g. ["India", "Europe"].
             risk_appetite: Investor risk appetite string.
+            sources: Optional list of source configs, e.g. [{"platform": "linkedin", "keywords": "..."}].
 
         Returns:
             Parsed JSON dict with key "recommendations".
         """
         logger.info(
-            "sourcing_agent.discover.start sectors=%s stages=%s geographies=%s risk=%s",
+            "sourcing_agent.discover.start sectors=%s stages=%s geographies=%s risk=%s sources=%s",
             sectors,
             stages,
             geographies,
             risk_appetite,
+            sources,
         )
 
         headers = {
@@ -73,12 +76,22 @@ class SourcingAgent:
             "X-Umans-Websearch-Provider": self.websearch_provider,
         }
 
+        source_lines = []
+        if sources:
+            for s in sources:
+                platform = s.get("platform", "web")
+                keywords = s.get("keywords", "")
+                source_lines.append(f"- {platform}: {keywords}")
+        source_block = "\n".join(source_lines) if source_lines else "- Use native web search"
+
         user_message = (
             f"Discover interesting founders for this thesis:\n"
             f"Sectors: {', '.join(sectors)}\n"
             f"Stages: {', '.join(stages)}\n"
             f"Geographies: {', '.join(geographies)}\n"
-            f"Risk appetite: {risk_appetite}"
+            f"Risk appetite: {risk_appetite}\n"
+            f"Sources to search (platform + keywords):\n{source_block}\n"
+            f"For each recommendation, include a 'source' field matching the platform that found it."
         )
 
         payload = {
