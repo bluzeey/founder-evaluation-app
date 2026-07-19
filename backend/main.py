@@ -54,6 +54,7 @@ from tasks.founder_pool import (
     load_founder_pool,
     save_founder_pool,
     run_sourcing_job,
+    create_founder_and_opportunity_from_pool_item,
 )
 from tasks.document_extraction import extract_document
 
@@ -284,72 +285,37 @@ def approve_pool_item(item_id: str, db: Session = Depends(get_db)):
         )
         raise HTTPException(status_code=400, detail="Pool item is not recommended")
 
-    founder_id = f"fnd_{uuid.uuid4().hex[:8]}"
-    founder = Founder(
-        id=founder_id,
-        name=item.name,
-        email=item.email or f"{item.name.lower().replace(' ', '.')}@example.com",
-        current_company=item.current_company,
-        role=item.role,
-        location=item.location,
-        linkedin_url=item.linkedin_url,
-        github_url=item.github_url,
-    )
-    crud.create_founder(db, founder)
-
-    # Initial cold-start score snapshot (score near neutral, low confidence, all unknowns).
-    db_founder = crud.get_founder(db, founder.id)
-    snapshot = calculate_founder_score(founder.id, [])
-    db_snapshot = crud.create_score_snapshot(db, snapshot)
-    crud.update_founder(db, founder.id, {"latest_score_snapshot_id": db_snapshot.id})
-
-    # Create opportunity so the approved founder has a case to evaluate.
-    opportunity_id = f"opp_{uuid.uuid4().hex[:8]}"
-    opp = OpportunityScreen(
-        opportunity_id=opportunity_id,
-        founder_id=founder.id,
-        founder_score=snapshot.founder_score,
-        founder_confidence=snapshot.overall_confidence,
-        founder_market_fit=FounderMarketFit(score=None, confidence=0.0, coverage=0.0),
-        team_completeness=TeamCompleteness(score=None, confidence=0.0, coverage=0.0),
-        market_posture="neutral",
-        market_confidence=0.0,
-        idea_vs_market_posture="neutral",
-        idea_vs_market_confidence=0.0,
-        next_founder_action="Run structured cold-start assessment.",
-    )
-    crud.create_or_update_opportunity(db, opp)
-
-    # Auto-trigger social background research.
-    background_id = f"soc_{uuid.uuid4().hex[:8]}"
-    crud.update_founder(db, founder_id, {"social_background_id": background_id})
-    pending = SocialMediaBackground(
-        id=background_id,
-        founder_id=founder_id,
-        status="pending",
-        linkedin_url=item.linkedin_url,
-        github_url=item.github_url,
-    )
-    store_social_background(pending)
-    research_social_background.delay(
-        founder_id=founder_id,
-        name=founder.name,
-        email=founder.email,
-        linkedin_url=item.linkedin_url,
-        github_url=item.github_url,
-        auto_score=True,
-    )
+    founder, opportunity_id = create_founder_and_opportunity_from_pool_item(db, item)
+    if not opportunity_id:
+        # If an existing founder somehow has no opportunity, create one now.
+        opportunity_id = f"opp_{uuid.uuid4().hex[:8]}"
+        opp = OpportunityScreen(
+            opportunity_id=opportunity_id,
+            founder_id=founder.id,
+            founder_score=founder.latest_score_snapshot.founder_score
+            if founder.latest_score_snapshot
+            else 50.0,
+            founder_confidence=founder.latest_score_snapshot.overall_confidence
+            if founder.latest_score_snapshot
+            else 0.0,
+            founder_market_fit=FounderMarketFit(score=None, confidence=0.0, coverage=0.0),
+            team_completeness=TeamCompleteness(score=None, confidence=0.0, coverage=0.0),
+            market_posture="neutral",
+            market_confidence=0.0,
+            idea_vs_market_posture="neutral",
+            idea_vs_market_confidence=0.0,
+            next_founder_action="Run structured cold-start assessment.",
+        )
+        crud.create_or_update_opportunity(db, opp)
 
     crud.update_pool_item_status(db, item_id, PoolItemStatus.APPROVED.value)
     logger.info(
-        "endpoint.approve_pool_item.end item_id=%s founder_id=%s opportunity_id=%s background_id=%s",
+        "endpoint.approve_pool_item.end item_id=%s founder_id=%s opportunity_id=%s",
         item_id,
-        founder_id,
+        founder.id,
         opportunity_id,
-        background_id,
     )
-    approved_founder = crud.founder_to_pydantic(db, crud.get_founder(db, founder_id))
-    return ApprovedPoolItemResponse(founder=approved_founder, opportunity_id=opportunity_id)
+    return ApprovedPoolItemResponse(founder=founder, opportunity_id=opportunity_id)
 
 
 @app.post("/v1/founders/pool/{item_id}/dismiss")

@@ -131,7 +131,7 @@ SAMPLE_OPPORTUNITIES = [
     {
         "id": "demo_opp_cold_start",
         "founder_id": "demo_fnd_talent_a",
-        "founder_score": 0.62,
+        "founder_score": 62,
         "founder_confidence": 0.55,
         "founder_market_fit": {},
         "team_completeness": {},
@@ -144,7 +144,7 @@ SAMPLE_OPPORTUNITIES = [
     {
         "id": "demo_opp_founder_spike",
         "founder_id": "demo_fnd_founder_b",
-        "founder_score": 0.78,
+        "founder_score": 78,
         "founder_confidence": 0.68,
         "founder_market_fit": {},
         "team_completeness": {},
@@ -157,7 +157,7 @@ SAMPLE_OPPORTUNITIES = [
     {
         "id": "demo_opp_contradictory_traction",
         "founder_id": "demo_fnd_founder_c",
-        "founder_score": 0.65,
+        "founder_score": 65,
         "founder_confidence": 0.5,
         "founder_market_fit": {},
         "team_completeness": {},

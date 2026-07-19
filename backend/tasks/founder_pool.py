@@ -2,7 +2,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import redis
 
@@ -10,9 +10,20 @@ from celery_app import app
 from database import SessionLocal
 import crud
 import db_models
-from models import FounderPoolItem, PoolItemStatus, SourcingJob
+from models import (
+    Founder,
+    FounderMarketFit,
+    FounderPoolItem,
+    OpportunityScreen,
+    PoolItemStatus,
+    SocialMediaBackground,
+    SourcingJob,
+    TeamCompleteness,
+)
 from research import SourcingAgent
+from scoring import calculate_founder_score
 from tasks.retry_utils import SOURCING_MAX_RETRIES, SOURCING_RETRY_BASE_DELAY, maybe_retry
+from tasks.social_research import research_social_background, store_social_background
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +119,100 @@ def _founder_exists(db, item: FounderPoolItem) -> bool:
         .first()
     )
     return existing is not None
+
+
+def _matching_founder(db, item: FounderPoolItem) -> Optional[db_models.Founder]:
+    """Return the existing founder that matches the pool item dedup key, if any."""
+    from sqlalchemy import func
+
+    name_norm = (item.name or "").lower().strip()
+    company_norm = (item.current_company or "").lower().strip()
+    linkedin_norm = (item.linkedin_url or "").lower().strip()
+    return (
+        db.query(db_models.Founder)
+        .filter(
+            func.lower(func.trim(db_models.Founder.name)) == name_norm,
+            func.lower(func.trim(db_models.Founder.current_company)) == company_norm,
+            func.lower(func.trim(db_models.Founder.linkedin_url)) == linkedin_norm,
+        )
+        .first()
+    )
+
+
+def create_founder_and_opportunity_from_pool_item(
+    db, item: FounderPoolItem
+) -> Tuple[Founder, Optional[str]]:
+    """Promote a sourced pool item into a Founder + cold-start Opportunity.
+
+    If a matching founder already exists, return the existing founder and
+    opportunity (if one exists) without creating duplicates.
+    """
+    existing_db_founder = _matching_founder(db, item)
+    if existing_db_founder:
+        existing_founder = crud.founder_to_pydantic(db, existing_db_founder)
+        existing_opps = crud.list_opportunities(db, founder_id=existing_founder.id)
+        existing_opp_id = existing_opps[0].id if existing_opps else None
+        return existing_founder, existing_opp_id
+
+    founder_id = f"fnd_{uuid.uuid4().hex[:8]}"
+    founder = Founder(
+        id=founder_id,
+        name=item.name,
+        email=item.email or f"{item.name.lower().replace(' ', '.')}@example.com",
+        current_company=item.current_company,
+        role=item.role,
+        location=item.location,
+        linkedin_url=item.linkedin_url,
+        github_url=item.github_url,
+        source_reason=item.reason,
+        source_url=item.source_url,
+    )
+    crud.create_founder(db, founder)
+
+    # Cold-start score snapshot (score near neutral, low confidence, all unknowns).
+    snapshot = calculate_founder_score(founder.id, [])
+    db_snapshot = crud.create_score_snapshot(db, snapshot)
+    crud.update_founder(db, founder.id, {"latest_score_snapshot_id": db_snapshot.id})
+
+    # Create an opportunity so the founder has a case file to evaluate.
+    opportunity_id = f"opp_{uuid.uuid4().hex[:8]}"
+    opp = OpportunityScreen(
+        opportunity_id=opportunity_id,
+        founder_id=founder.id,
+        founder_score=snapshot.founder_score,
+        founder_confidence=snapshot.overall_confidence,
+        founder_market_fit=FounderMarketFit(score=None, confidence=0.0, coverage=0.0),
+        team_completeness=TeamCompleteness(score=None, confidence=0.0, coverage=0.0),
+        market_posture="neutral",
+        market_confidence=0.0,
+        idea_vs_market_posture="neutral",
+        idea_vs_market_confidence=0.0,
+        next_founder_action="Run structured cold-start assessment.",
+    )
+    crud.create_or_update_opportunity(db, opp)
+
+    # Auto-trigger social background research when links are available.
+    if item.linkedin_url or item.github_url:
+        background_id = f"soc_{uuid.uuid4().hex[:8]}"
+        crud.update_founder(db, founder_id, {"social_background_id": background_id})
+        pending = SocialMediaBackground(
+            id=background_id,
+            founder_id=founder_id,
+            status="pending",
+            linkedin_url=item.linkedin_url,
+            github_url=item.github_url,
+        )
+        store_social_background(pending)
+        research_social_background.delay(
+            founder_id=founder_id,
+            name=founder.name,
+            email=founder.email,
+            linkedin_url=item.linkedin_url,
+            github_url=item.github_url,
+            auto_score=True,
+        )
+
+    return crud.founder_to_pydantic(db, crud.get_founder(db, founder_id)), opportunity_id
 
 
 def refresh_founder_pool(
@@ -238,6 +343,11 @@ def refresh_founder_pool(
                 db_models.FounderPoolItem.status == PoolItemStatus.RECOMMENDED.value
             ).delete(synchronize_session=False)
             crud.create_pool_items(db, new_items)
+
+            # Every sourced lead becomes a founder case with a cold-start score.
+            # Social background research is queued automatically when links exist.
+            for item in new_items:
+                create_founder_and_opportunity_from_pool_item(db, item)
 
         db.commit()
         final_pool = crud.list_pool_items(db)

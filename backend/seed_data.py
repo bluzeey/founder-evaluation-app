@@ -149,7 +149,7 @@ SAMPLE_OPPORTUNITIES: List[Dict[str, Any]] = [
     {
         "opportunity_id": "demo_opp_cold_start",
         "founder_id": "demo_fnd_talent_a",
-        "founder_score": 0.62,
+        "founder_score": 62,
         "founder_confidence": 0.55,
         "market_posture": "neutral",
         "market_confidence": 0.4,
@@ -160,7 +160,7 @@ SAMPLE_OPPORTUNITIES: List[Dict[str, Any]] = [
     {
         "opportunity_id": "demo_opp_founder_spike",
         "founder_id": "demo_fnd_founder_b",
-        "founder_score": 0.78,
+        "founder_score": 78,
         "founder_confidence": 0.68,
         "market_posture": "neutral",
         "market_confidence": 0.45,
@@ -171,7 +171,7 @@ SAMPLE_OPPORTUNITIES: List[Dict[str, Any]] = [
     {
         "opportunity_id": "demo_opp_contradictory_traction",
         "founder_id": "demo_fnd_founder_c",
-        "founder_score": 0.65,
+        "founder_score": 65,
         "founder_confidence": 0.5,
         "market_posture": "neutral",
         "market_confidence": 0.55,

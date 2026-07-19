@@ -21,6 +21,8 @@ export type BackendFounder = {
   location_city?: string;
   linkedin_url?: string;
   github_url?: string;
+  source_reason?: string;
+  source_url?: string;
   ai_research_summary?: string;
   ai_research_sources: string[];
   social_background_id?: string;

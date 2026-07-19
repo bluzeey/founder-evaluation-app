@@ -24,6 +24,8 @@ class Founder(Base):
     location_city: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     linkedin_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     github_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    source_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     ai_research_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     ai_research_sources: Mapped[List[str]] = mapped_column(JSONB, nullable=False, default=list)
     social_background_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)

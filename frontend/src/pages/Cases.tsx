@@ -90,7 +90,7 @@ export default function Cases() {
                   <div className="rounded-sm border border-concrete/20 bg-manila/30 p-3">
                     <div className="label">Founder score</div>
                     <div className="mt-1 text-sm font-semibold text-ink">
-                      {Math.round(opp.founder_score * 100)} / 100
+                      {Math.round(opp.founder_score)} / 100
                     </div>
                   </div>
                   <div className="rounded-sm border border-concrete/20 bg-manila/30 p-3">

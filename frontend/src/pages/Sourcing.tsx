@@ -127,32 +127,6 @@ export default function Sourcing() {
     }
   };
 
-  const handleApprove = async (id: string) => {
-    setActionId(`approve-${id}`);
-    try {
-      await api.pool.approve(id);
-      await refresh();
-    } catch (err) {
-      const e = err as ApiError;
-      setError(e.message || "Approve failed");
-    } finally {
-      setActionId(null);
-    }
-  };
-
-  const handleDismiss = async (id: string) => {
-    setActionId(`dismiss-${id}`);
-    try {
-      await api.pool.dismiss(id);
-      await refresh();
-    } catch (err) {
-      const e = err as ApiError;
-      setError(e.message || "Dismiss failed");
-    } finally {
-      setActionId(null);
-    }
-  };
-
   const handleAddSource = async (thesisId: string, scheduleId: string) => {
     const draft = newSourceByThesis[thesisId];
     if (!draft || !draft.keywords.trim()) return;
@@ -500,26 +474,6 @@ export default function Sourcing() {
                     </a>
                   )}
                 </div>
-              {item.status === "recommended" && (
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleApprove(item.id)}
-                    disabled={actionId === `approve-${item.id}`}
-                    className="flex items-center gap-1 rounded-sm border border-verified/30 bg-verified/10 px-3 py-1.5 text-sm font-sans font-medium text-verified hover:bg-verified/20 disabled:opacity-50"
-                  >
-                    {actionId === `approve-${item.id}` ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-                    Approve
-                  </button>
-                  <button
-                    onClick={() => handleDismiss(item.id)}
-                    disabled={actionId === `dismiss-${item.id}`}
-                    className="flex items-center gap-1 rounded-sm border border-concrete/30 bg-paper px-3 py-1.5 text-sm font-sans font-medium text-concrete hover:bg-manila/40 disabled:opacity-50"
-                  >
-                    {actionId === `dismiss-${item.id}` ? <Loader2 size={16} className="animate-spin" /> : <XCircle size={16} />}
-                    Dismiss
-                  </button>
-                </div>
-              )}
             </div>
           ))}
         </div>

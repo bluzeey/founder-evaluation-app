@@ -3,12 +3,20 @@ import { useParams, Link } from "react-router-dom";
 import { AlertTriangle, ArrowLeft, Github, Linkedin, Loader2, Upload } from "lucide-react";
 import { CaseStatusBadge } from "@/components/StatusBadge";
 import { api } from "@/api/client";
-import type { BackendOpportunity, BackendFounder, BackendClaim, ApiError } from "@/types/backend";
+import type {
+  BackendOpportunity,
+  BackendFounder,
+  BackendClaim,
+  BackendScoreSnapshot,
+  BackendDimensionBreakdown,
+  ApiError,
+} from "@/types/backend";
 
 export default function DealRoom() {
   const { caseId } = useParams<{ caseId: string }>();
   const [opportunity, setOpportunity] = useState<BackendOpportunity | null>(null);
   const [founder, setFounder] = useState<BackendFounder | null>(null);
+  const [snapshot, setSnapshot] = useState<BackendScoreSnapshot | null>(null);
   const [claims, setClaims] = useState<BackendClaim[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -19,28 +27,30 @@ export default function DealRoom() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    api.opportunities
-      .get(caseId)
-      .then((opp) => {
+    (async () => {
+      try {
+        const opp = await api.opportunities.get(caseId);
         if (cancelled) return;
         setOpportunity(opp);
-        return api.founders.get(opp.founder_id);
-      })
-      .then((f) => {
-        if (!cancelled && f) setFounder(f);
-      })
-      .catch((err) => {
+        const [f, snap] = await Promise.all([
+          api.founders.get(opp.founder_id),
+          api.founders.score(opp.founder_id),
+        ]);
+        if (cancelled) return;
+        if (f) setFounder(f);
+        setSnapshot(snap);
+      } catch (err) {
         if (!cancelled) setError((err as ApiError).message || "Case not found");
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setLoading(false);
-      });
-    api.opportunities
-      .diligence(caseId)
-      .then((c) => {
+      }
+      try {
+        const c = await api.opportunities.diligence(caseId);
         if (!cancelled) setClaims(c);
-      })
-      .catch(() => {});
+      } catch {
+        // ignore diligence errors on initial load
+      }
+    })();
     const interval = setInterval(() => {
       api.opportunities.diligence(caseId).then(setClaims).catch(() => {});
     }, 10000);
@@ -75,6 +85,7 @@ export default function DealRoom() {
     <LiveOpportunityView
       opportunity={opportunity}
       founder={founder}
+      snapshot={snapshot}
       claims={claims}
       uploading={uploading}
       setUploading={setUploading}
@@ -95,15 +106,48 @@ function SocialLink({ href, icon: Icon, label }: { href: string; icon: typeof Li
   );
 }
 
+function DimensionCard({ breakdown }: { breakdown: BackendDimensionBreakdown }) {
+  const name = breakdown.dimension
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  return (
+    <div className="rounded-sm border border-concrete/20 bg-paper p-3 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="label">{name}</div>
+        {breakdown.unknown && (
+          <span className="rounded-sm bg-concrete/10 px-1.5 py-0.5 text-[10px] font-medium uppercase text-concrete">
+            Unknown
+          </span>
+        )}
+      </div>
+      <div className="font-display text-xl font-bold tabular text-ink">
+        {breakdown.unknown ? "—" : `${Math.round(breakdown.adjusted_score)} / 100`}
+      </div>
+      <div className="text-xs text-concrete">
+        Confidence: {Math.round(breakdown.confidence * 100)}% · Evidence: {breakdown.evidence_count}
+        {breakdown.contradiction_count > 0 && ` · Contradictions: ${breakdown.contradiction_count}`}
+      </div>
+      {breakdown.next_test && (
+        <div className="text-xs text-action">Next: {breakdown.next_test}</div>
+      )}
+      {breakdown.unknowns.length > 0 && (
+        <div className="text-xs text-concrete">{breakdown.unknowns[0]}</div>
+      )}
+    </div>
+  );
+}
+
 function LiveOpportunityView({
   opportunity,
   founder,
+  snapshot,
   claims,
   uploading,
   setUploading,
 }: {
   opportunity: BackendOpportunity;
   founder: BackendFounder | null;
+  snapshot: BackendScoreSnapshot | null;
   claims: BackendClaim[];
   uploading: boolean;
   setUploading: (v: boolean) => void;
@@ -146,7 +190,7 @@ function LiveOpportunityView({
             </div>
             <p className="text-sm text-concrete">
               {founder?.name ?? opportunity.founder_id} · Backend opportunity · Score{" "}
-              {Math.round(opportunity.founder_score * 100)}/100
+              {Math.round(opportunity.founder_score)}/100
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               {founder?.linkedin_url && (
@@ -164,7 +208,7 @@ function LiveOpportunityView({
           <div className="rounded-sm border border-concrete/20 bg-paper p-3">
             <div className="label">Founder score</div>
             <div className="font-display text-xl font-bold tabular text-ink">
-              {Math.round(opportunity.founder_score * 100)}
+              {Math.round(opportunity.founder_score)}
             </div>
           </div>
           <div className="rounded-sm border border-concrete/20 bg-paper p-3">
@@ -187,6 +231,36 @@ function LiveOpportunityView({
           <span className="font-semibold text-ink">Next action:</span>{" "}
           {opportunity.next_founder_action || "Review opportunity details"}
         </div>
+      </div>
+
+      <div className="panel space-y-3">
+        <h3 className="font-display text-lg font-semibold text-ink">Source signal</h3>
+        <p className="text-sm font-medium text-ink">
+          {founder?.source_reason || "No reason provided."}
+        </p>
+        {founder?.source_url && (
+          <a
+            href={founder.source_url}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-xs text-action hover:underline"
+          >
+            Source
+          </a>
+        )}
+      </div>
+
+      <div className="panel space-y-4">
+        <h3 className="font-display text-lg font-semibold text-ink">Founder score breakdown</h3>
+        {snapshot ? (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {snapshot.dimension_breakdowns.map((bd) => (
+              <DimensionCard key={bd.dimension} breakdown={bd} />
+            ))}
+          </div>
+        ) : (
+          <div className="text-sm text-concrete">No score snapshot available yet.</div>
+        )}
       </div>
 
       <div className="panel space-y-4">
