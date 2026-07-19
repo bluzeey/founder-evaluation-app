@@ -10,6 +10,7 @@ import httpx
 from .http_utils import raise_for_status
 from .prompts import SOCIAL_RESEARCH_SYSTEM_PROMPT
 from .umans_lock import is_web_search_enabled, umans_api_lock
+from .web_search import prepare_web_search
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,17 @@ class SocialAgent:
         if github_url:
             user_message += f"\nGitHub: {github_url}"
 
+        search_query = f"{name} founder social footprint"
+        if linkedin_url:
+            search_query += f" linkedin {linkedin_url}"
+        if github_url:
+            search_query += f" github {github_url}"
+        web_search_context, use_native_tools = prepare_web_search(
+            search_query, self.websearch_provider, self.enable_web_search
+        )
+        if web_search_context:
+            user_message += f"\n\n{web_search_context}"
+
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
@@ -91,11 +103,17 @@ class SocialAgent:
             ],
             "max_completion_tokens": self.max_tokens,
         }
-        if self.enable_web_search:
+        if use_native_tools:
             payload["tools"] = [{"type": "web_search"}]
 
         with httpx.Client(timeout=self.timeout) as client:
-            logger.info("social_agent.research.request name=%s model=%s enable_web_search=%s", name, self.model, self.enable_web_search)
+            logger.info(
+                "social_agent.research.request name=%s model=%s enable_web_search=%s native_tools=%s",
+                name,
+                self.model,
+                self.enable_web_search,
+                use_native_tools,
+            )
             with umans_api_lock():
                 response = client.post(UMANS_BASE_URL, headers=headers, json=payload)
             raise_for_status(response)

@@ -9,6 +9,7 @@ import httpx
 from .http_utils import raise_for_status
 from .prompts import FOUNDER_RESEARCH_SYSTEM_PROMPT
 from .umans_lock import is_web_search_enabled, umans_api_lock
+from .web_search import prepare_web_search
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,12 @@ class UmansClient:
             f"Query: {query}"
         )
 
+        web_search_context, use_native_tools = prepare_web_search(
+            query, self.websearch_provider, self.enable_web_search
+        )
+        if web_search_context:
+            user_message += f"\n\n{web_search_context}"
+
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
@@ -82,11 +89,17 @@ class UmansClient:
             ],
             "max_completion_tokens": self.max_tokens,
         }
-        if self.enable_web_search:
+        if use_native_tools:
             payload["tools"] = [{"type": "web_search"}]
 
         with httpx.Client(timeout=self.timeout) as client:
-            logger.info("umans_client.research.request query=%s model=%s enable_web_search=%s", query, self.model, self.enable_web_search)
+            logger.info(
+                "umans_client.research.request query=%s model=%s enable_web_search=%s native_tools=%s",
+                query,
+                self.model,
+                self.enable_web_search,
+                use_native_tools,
+            )
             with umans_api_lock():
                 response = client.post(UMANS_BASE_URL, headers=headers, json=payload)
             raise_for_status(response)

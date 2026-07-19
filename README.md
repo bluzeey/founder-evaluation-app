@@ -154,8 +154,14 @@ UMANS_API_KEY=sk-your-umans-api-key
 UMANS_MODEL=umans-coder
 UMANS_SOCIAL_MODEL=umans-coder
 UMANS_DOCUMENT_MODEL=umans-coder
-UMANS_WEBSEARCH_PROVIDER=native
+# Use tavily to avoid Umans native web-search overload. Requires TAVILY_API_KEY.
+UMANS_WEBSEARCH_PROVIDER=tavily
 UMANS_RESEARCH_TIMEOUT=60
+
+# Tavily configuration (only needed when UMANS_WEBSEARCH_PROVIDER=tavily)
+TAVILY_API_KEY=tvly-your-tavily-api-key
+TAVILY_SEARCH_DEPTH=basic
+TAVILY_MAX_RESULTS=5
 
 # Per-agent web search toggles. Sourcing keeps web search for real-time
 # discovery; social research defaults to false because it already receives URLs.

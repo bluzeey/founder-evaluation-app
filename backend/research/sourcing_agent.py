@@ -9,6 +9,7 @@ import httpx
 from .http_utils import raise_for_status
 from .prompts import SOURCING_SYSTEM_PROMPT
 from .umans_lock import is_web_search_enabled, umans_api_lock
+from .web_search import prepare_web_search
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ class SourcingAgent:
                 platform = s.get("platform", "web")
                 keywords = s.get("keywords", "")
                 source_lines.append(f"- {platform}: {keywords}")
-        source_block = "\n".join(source_lines) if source_lines else "- Use native web search"
+        source_block = "\n".join(source_lines) if source_lines else "- Use web search"
 
         user_message = (
             f"Discover interesting founders for this thesis:\n"
@@ -102,6 +103,19 @@ class SourcingAgent:
             f"For each recommendation, include a 'source' field matching the platform that found it."
         )
 
+        search_keywords = " ".join(
+            [s.get("keywords", "") for s in sources or []]
+        ) or ", ".join(sectors)
+        search_query = (
+            f"Interesting pre-seed/seed startup founders in {', '.join(geographies)} "
+            f"working on {search_keywords}"
+        )
+        web_search_context, use_native_tools = prepare_web_search(
+            search_query, self.websearch_provider, self.enable_web_search
+        )
+        if web_search_context:
+            user_message += f"\n\n{web_search_context}"
+
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
@@ -110,15 +124,16 @@ class SourcingAgent:
             ],
             "max_completion_tokens": self.max_tokens,
         }
-        if self.enable_web_search:
+        if use_native_tools:
             payload["tools"] = [{"type": "web_search"}]
 
         with httpx.Client(timeout=self.timeout) as client:
             logger.info(
-                "sourcing_agent.discover.request provider=%s model=%s enable_web_search=%s",
+                "sourcing_agent.discover.request provider=%s model=%s enable_web_search=%s native_tools=%s",
                 self.websearch_provider,
                 self.model,
                 self.enable_web_search,
+                use_native_tools,
             )
             with umans_api_lock():
                 response = client.post(UMANS_BASE_URL, headers=headers, json=payload)
