@@ -1,11 +1,13 @@
 import { useMemo, useState, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { Search, MoreHorizontal, UserPlus, Eye, Mail, Activity, ChevronDown } from "lucide-react";
+import { Search, MoreHorizontal, UserPlus, Eye, Mail, Activity, ChevronDown, Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { DEMO_CASES, TALENT_SIGNALS, getDemoPerson, getDemoCompany } from "@/data/demoCases";
 import { useApp } from "@/store/appContext";
 import { CaseStatusBadge } from "@/components/StatusBadge";
 import { DemoBadge } from "@/components/DemoBadge";
+import { api } from "@/api/client";
 import type { CaseStatus, TalentSignal } from "@/domain/types";
+import type { BackendPoolItem, ApiError } from "@/types/backend";
 
 const STATUS_OPTIONS: CaseStatus[] = [
   "DISCOVERED",
@@ -32,6 +34,9 @@ export default function Discovery() {
   const [minConfidence, setMinConfidence] = useState(0);
   const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [openActionId, setOpenActionId] = useState<string | null>(null);
+  const [livePool, setLivePool] = useState<BackendPoolItem[]>([]);
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [liveActionId, setLiveActionId] = useState<string | null>(null);
   const actionRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -44,7 +49,47 @@ export default function Discovery() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    setLiveLoading(true);
+    api.pool
+      .list()
+      .then((items) => {
+        if (!cancelled) setLivePool(items);
+      })
+      .catch(() => {
+        // Live backend is optional; keep demo data visible.
+      })
+      .finally(() => {
+        if (!cancelled) setLiveLoading(false);
+      });
+    const interval = setInterval(() => {
+      api.pool.list().then(setLivePool).catch(() => {});
+    }, 10000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
   const rows = useMemo(() => {
+    const liveRows: Array<TalentSignal & { isInbound: boolean; live: boolean }> = livePool.map((item) => ({
+      id: item.id,
+      person: item.name,
+      currentProject: item.current_company,
+      artifactUrl: item.source_url,
+      sourceChannel: "AI sourcing",
+      thesisTags: [],
+      strongestSignal: item.reason,
+      signalConfidence: 0.5,
+      signalDate: item.created_at,
+      momentumTrend: "INSUFFICIENT_HISTORY",
+      status: "DISCOVERED" as CaseStatus,
+      whyAppeared: item.reason,
+      caseId: undefined,
+      isInbound: false,
+      live: true,
+    }));
     const talentRows: TalentSignal[] = TALENT_SIGNALS;
     const caseRows = DEMO_CASES.map((c) => ({
       id: c.id,
@@ -62,11 +107,13 @@ export default function Discovery() {
       whyAppeared: c.inboundOrOutbound === "OUTBOUND" ? "Outbound talent signal" : "Inbound application",
       caseId: c.id,
       isInbound: c.inboundOrOutbound === "INBOUND",
+      live: false,
     }));
 
     const combined = [
-      ...talentRows.map((t) => ({ ...t, isInbound: false })),
-      ...(caseRows as unknown as Array<TalentSignal & { isInbound: boolean }>),
+      ...liveRows,
+      ...talentRows.map((t) => ({ ...t, isInbound: false, live: false })),
+      ...(caseRows as unknown as Array<TalentSignal & { isInbound: boolean; live: boolean }>),
     ].filter((row) => {
       const q = query.toLowerCase();
       const matchesQuery =
@@ -82,7 +129,7 @@ export default function Discovery() {
       return matchesQuery && matchesSource && matchesTag && matchesStatus && matchesDim && matchesConfidence;
     });
     return combined;
-  }, [query, source, tag, status, dimension, minConfidence]);
+  }, [query, source, tag, status, dimension, minConfidence, livePool]);
 
   const activeFilters = [
     source !== "All" && { label: source, onRemove: () => setSource("All") },
@@ -94,6 +141,34 @@ export default function Discovery() {
 
   const activateTalent = (caseId: string) => {
     setCaseOverride(caseId, { status: "SCREENING", nextAction: "Activated from Discovery. Schedule shared screening call within 24h." });
+  };
+
+  const handleLiveApprove = async (id: string) => {
+    setLiveActionId(id);
+    try {
+      await api.pool.approve(id);
+      const updated = await api.pool.list();
+      setLivePool(updated);
+    } catch (err) {
+      const e = err as ApiError;
+      alert(e.message || "Approve failed");
+    } finally {
+      setLiveActionId(null);
+    }
+  };
+
+  const handleLiveDismiss = async (id: string) => {
+    setLiveActionId(id);
+    try {
+      await api.pool.dismiss(id);
+      const updated = await api.pool.list();
+      setLivePool(updated);
+    } catch (err) {
+      const e = err as ApiError;
+      alert(e.message || "Dismiss failed");
+    } finally {
+      setLiveActionId(null);
+    }
   };
 
   return (
@@ -183,8 +258,9 @@ export default function Discovery() {
       {/* Results */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <div className="text-sm text-concrete">
+          <div className="flex items-center gap-2 text-sm text-concrete">
             <span className="font-display font-semibold text-ink">{rows.length}</span> signals
+            {liveLoading && <Loader2 size={14} className="animate-spin text-concrete" />}
           </div>
         </div>
 
@@ -206,6 +282,11 @@ export default function Discovery() {
                     <div className="flex items-center gap-2">
                       <h3 className="font-sans font-semibold text-ink">{row.person}</h3>
                       <CaseStatusBadge status={row.status} />
+                      {row.live && (
+                        <span className="rounded-sm bg-action/10 px-1.5 py-0.5 text-[10px] font-mono font-semibold uppercase text-action">
+                          Live
+                        </span>
+                      )}
                     </div>
                     <div className="mt-0.5 text-sm text-concrete truncate">
                       {row.currentProject || "—"} · {row.sourceChannel}
@@ -245,57 +326,80 @@ export default function Discovery() {
                   <span className="text-ink/70">Why today:</span> {row.whyAppeared}
                 </div>
                 <div className="mt-3 flex items-center gap-2">
-                  <Link
-                    to={`/cases/${cid}`}
-                    className="flex items-center gap-1 rounded-sm bg-action px-3 py-1.5 text-sm font-sans font-medium text-paper hover:bg-action-dark"
-                  >
-                    <Eye size={14} /> Open
-                  </Link>
-                  <button
-                    onClick={() => activateTalent(cid)}
-                    className="flex items-center gap-1 rounded-sm border border-verified/30 bg-verified/10 px-3 py-1.5 text-sm font-sans font-medium text-verified hover:bg-verified/20"
-                  >
-                    <UserPlus size={14} /> Activate
-                  </button>
-                  <div className="relative" ref={isOpen ? actionRef : undefined}>
-                    <button
-                      onClick={() => setOpenActionId(isOpen ? null : cid)}
-                      className="rounded-sm border border-concrete/30 bg-paper p-1.5 text-concrete hover:bg-manila/40"
-                    >
-                      <MoreHorizontal size={18} />
-                    </button>
-                    {isOpen && (
-                      <div className="absolute right-0 top-full z-10 mt-1 w-44 rounded-sm border border-concrete/20 bg-paper shadow-paper-lg">
+                  {row.live ? (
+                    <>
+                      <button
+                        onClick={() => handleLiveApprove(row.id)}
+                        disabled={liveActionId === row.id}
+                        className="flex items-center gap-1 rounded-sm border border-verified/30 bg-verified/10 px-3 py-1.5 text-sm font-sans font-medium text-verified hover:bg-verified/20 disabled:opacity-50"
+                      >
+                        {liveActionId === row.id ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                        Approve
+                      </button>
+                      <button
+                        onClick={() => handleLiveDismiss(row.id)}
+                        disabled={liveActionId === row.id}
+                        className="flex items-center gap-1 rounded-sm border border-concrete/30 bg-paper px-3 py-1.5 text-sm font-sans font-medium text-concrete hover:bg-manila/40 disabled:opacity-50"
+                      >
+                        {liveActionId === row.id ? <Loader2 size={14} className="animate-spin" /> : <XCircle size={14} />}
+                        Dismiss
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <Link
+                        to={`/cases/${cid}`}
+                        className="flex items-center gap-1 rounded-sm bg-action px-3 py-1.5 text-sm font-sans font-medium text-paper hover:bg-action-dark"
+                      >
+                        <Eye size={14} /> Open
+                      </Link>
+                      <button
+                        onClick={() => activateTalent(cid)}
+                        className="flex items-center gap-1 rounded-sm border border-verified/30 bg-verified/10 px-3 py-1.5 text-sm font-sans font-medium text-verified hover:bg-verified/20"
+                      >
+                        <UserPlus size={14} /> Activate
+                      </button>
+                      <div className="relative" ref={isOpen ? actionRef : undefined}>
                         <button
-                          onClick={() => {
-                            setCaseOverride(cid, { status: "MONITORING", nextAction: "Monitoring: wait for next signal." });
-                            setOpenActionId(null);
-                          }}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-ink hover:bg-manila/40"
+                          onClick={() => setOpenActionId(isOpen ? null : cid)}
+                          className="rounded-sm border border-concrete/30 bg-paper p-1.5 text-concrete hover:bg-manila/40"
                         >
-                          <Activity size={14} /> Monitor
+                          <MoreHorizontal size={18} />
                         </button>
-                        <button
-                          onClick={() => {
-                            alert("Demo: research request would queue external lookups.");
-                            setOpenActionId(null);
-                          }}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-ink hover:bg-manila/40"
-                        >
-                          <Search size={14} /> Research
-                        </button>
-                        <button
-                          onClick={() => {
-                            setCaseOverride(cid, { status: "AWAITING_APPLICATION", nextAction: "Invitation sent; awaiting application form." });
-                            setOpenActionId(null);
-                          }}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-ink hover:bg-manila/40"
-                        >
-                          <Mail size={14} /> Invite to apply
-                        </button>
+                        {isOpen && (
+                          <div className="absolute right-0 top-full z-10 mt-1 w-44 rounded-sm border border-concrete/20 bg-paper shadow-paper-lg">
+                            <button
+                              onClick={() => {
+                                setCaseOverride(cid, { status: "MONITORING", nextAction: "Monitoring: wait for next signal." });
+                                setOpenActionId(null);
+                              }}
+                              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-ink hover:bg-manila/40"
+                            >
+                              <Activity size={14} /> Monitor
+                            </button>
+                            <button
+                              onClick={() => {
+                                alert("Demo: research request would queue external lookups.");
+                                setOpenActionId(null);
+                              }}
+                              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-ink hover:bg-manila/40"
+                            >
+                              <Search size={14} /> Research
+                            </button>
+                            <button
+                              onClick={() => {
+                                setCaseOverride(cid, { status: "AWAITING_APPLICATION", nextAction: "Invitation sent; awaiting application form." });
+                                setOpenActionId(null);
+                              }}
+                              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-ink hover:bg-manila/40"
+                            >
+                              <Mail size={14} /> Invite to apply
+                            </button>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
+                    </>
+                  )}
                 </div>
               </div>
             </div>

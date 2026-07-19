@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { FileText, CheckCircle2, Loader2, AlertCircle } from "lucide-react";
+import { FileText, CheckCircle2, Loader2, AlertCircle, Upload } from "lucide-react";
 import { extractDeck } from "@/agents/deckExtractor";
 import { claimsFromDeck } from "@/agents/claimExtractor";
 import { DemoBadge } from "@/components/DemoBadge";
 import { DeckClaimTable } from "@/components/DeckClaimTable";
+import { api } from "@/api/client";
 import type { DeckExtractionResult } from "@/domain/types";
+import type { ApiError } from "@/types/backend";
 
 const DEMO_DECKS = [
   { value: "case-contradictory-traction", label: "Demo deck: TractionAI (contradictory traction)" },
@@ -24,8 +26,10 @@ export default function Apply() {
   const navigate = useNavigate();
   const [company, setCompany] = useState("");
   const [founder, setFounder] = useState("");
+  const [email, setEmail] = useState("");
   const [deckName, setDeckName] = useState(DEMO_DECKS[0].value);
   const [productUrl, setProductUrl] = useState("");
+  const [file, setFile] = useState<File | null>(null);
   const [consent, setConsent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [extraction, setExtraction] = useState<DeckExtractionResult | null>(null);
@@ -47,14 +51,24 @@ export default function Apply() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!company || !founder || !consent) {
-      setError("Company, founder, and consent are required.");
+    if (!company || !founder || !email || !consent) {
+      setError("Company, founder name, email, and consent are required.");
       return;
     }
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 400));
-    setLoading(false);
-    navigate(`/cases/${deckName}`);
+    setError(null);
+    try {
+      const created = await api.founders.create({ name: founder, email, current_company: company });
+      const opportunityId = `opp_${Date.now()}`;
+      await api.opportunities.screen(opportunityId, created.id);
+      if (file) {
+        await api.opportunities.uploadDeck(opportunityId, file, created.id);
+      }
+      navigate(`/cases/${opportunityId}`);
+    } catch (err) {
+      setError((err as ApiError).message || "Application failed");
+      setLoading(false);
+    }
   };
 
   const deckClaims = extraction ? claimsFromDeck("new-application", extraction) : [];
@@ -91,7 +105,29 @@ export default function Apply() {
             />
           </div>
           <div>
-            <label className="label mb-1.5 block">Deck (demo fixtures)</label>
+            <label className="label mb-1.5 block">Founder email</label>
+            <input
+              type="email"
+              className="w-full rounded-sm border border-concrete/30 bg-paper px-3 py-2 text-sm font-sans outline-none"
+              placeholder="jane@acme.ai"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="label mb-1.5 block">Product URL</label>
+            <input
+              className="w-full rounded-sm border border-concrete/30 bg-paper px-3 py-2 text-sm font-sans outline-none"
+              placeholder="https://"
+              value={productUrl}
+              onChange={(e) => setProductUrl(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+          <div>
+            <label className="label mb-1.5 block">Deck (demo fixtures for local preview)</label>
             <select
               className="w-full rounded-sm border border-concrete/30 bg-paper px-3 py-2 text-sm font-sans outline-none"
               value={deckName}
@@ -105,13 +141,17 @@ export default function Apply() {
             </select>
           </div>
           <div>
-            <label className="label mb-1.5 block">Product URL</label>
-            <input
-              className="w-full rounded-sm border border-concrete/30 bg-paper px-3 py-2 text-sm font-sans outline-none"
-              placeholder="https://"
-              value={productUrl}
-              onChange={(e) => setProductUrl(e.target.value)}
-            />
+            <label className="label mb-1.5 block">Real deck upload (PDF/DOCX/TXT/MD)</label>
+            <label className="flex w-full cursor-pointer items-center gap-2 rounded-sm border border-concrete/30 bg-paper px-3 py-2 text-sm font-sans text-ink hover:bg-manila/40">
+              <Upload size={16} />
+              <span className="flex-1 truncate">{file ? file.name : "Choose file"}</span>
+              <input
+                type="file"
+                className="hidden"
+                accept=".pdf,.docx,.txt,.md"
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
+              />
+            </label>
           </div>
         </div>
 
@@ -135,11 +175,11 @@ export default function Apply() {
             className="flex items-center gap-2 rounded-sm border border-concrete/30 bg-paper px-4 py-2.5 text-sm font-sans font-medium text-ink hover:bg-manila/40 disabled:opacity-50"
           >
             {loading ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
-            {loading ? "Extracting…" : "Extract deck claims"}
+            {loading ? "Extracting…" : "Preview demo deck"}
           </button>
           <button
             type="submit"
-            disabled={loading || !company || !founder || !consent}
+            disabled={loading || !company || !founder || !email || !consent}
             className="flex items-center gap-2 rounded-sm bg-action px-4 py-2.5 text-sm font-sans font-medium text-paper hover:bg-action-dark disabled:opacity-50"
           >
             {loading ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
@@ -150,7 +190,7 @@ export default function Apply() {
         {extraction && (
           <div className="rounded-sm border border-concrete/20 bg-manila/30 p-4 text-sm text-ink/80">
             <div className="flex items-center gap-2 font-semibold text-ink">
-              <FileText size={16} /> Extraction result
+              <FileText size={16} /> Demo extraction result
             </div>
             <div className="mt-2 grid grid-cols-3 gap-3 text-xs">
               <div className="rounded-sm border border-concrete/20 bg-paper p-2">
@@ -178,7 +218,7 @@ export default function Apply() {
 
       {extraction && (
         <div className="panel space-y-4">
-          <h3 className="font-display text-lg font-semibold text-ink">Deck claims</h3>
+          <h3 className="font-display text-lg font-semibold text-ink">Demo deck claims</h3>
           <DeckClaimTable claims={deckClaims} />
           <div className="text-xs text-concrete">
             Projections and assumptions are shown as distinct from verified facts. Click a claim to see its slide citation.

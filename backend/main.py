@@ -210,10 +210,14 @@ def _apply_social_background(db: Session, founder_id: str) -> Optional[SocialMed
 
 
 @app.get("/v1/founders/pool", response_model=List[FounderPoolItem])
-def list_founder_pool(status: Optional[str] = None, db: Session = Depends(get_db)):
+def list_founder_pool(
+    status: Optional[str] = None,
+    job_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
     """List AI-sourced founder pool recommendations."""
-    db_items = crud.list_pool_items(db, status=status)
-    logger.info("endpoint.list_founder_pool status=%s total=%s", status, len(db_items))
+    db_items = crud.list_pool_items(db, status=status, job_id=job_id)
+    logger.info("endpoint.list_founder_pool status=%s job_id=%s total=%s", status, job_id, len(db_items))
     if status:
         try:
             target = PoolItemStatus(status)
@@ -681,8 +685,12 @@ def simulate_assessment(req: SimulateAssessmentRequest, db: Session = Depends(ge
 
 
 @app.post("/v1/opportunities/{opportunity_id}/screen", response_model=OpportunityScreen)
-def screen_opportunity(opportunity_id: str, db: Session = Depends(get_db)):
-    logger.info("endpoint.screen_opportunity.start opportunity_id=%s", opportunity_id)
+def screen_opportunity(
+    opportunity_id: str,
+    founder_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    logger.info("endpoint.screen_opportunity.start opportunity_id=%s founder_id=%s", opportunity_id, founder_id)
     db_opp = crud.get_opportunity(db, opportunity_id)
     if db_opp:
         opp = crud.opportunity_to_pydantic(db_opp)
@@ -707,11 +715,16 @@ def screen_opportunity(opportunity_id: str, db: Session = Depends(get_db)):
         )
         return opp
 
-    # Build a demo opportunity for the first founder if available.
-    db_founders = crud.list_founders(db)
-    if not db_founders:
-        raise HTTPException(status_code=404, detail="No founder available")
-    db_founder = db_founders[0]
+    # Build a demo opportunity for the requested founder or the first available founder.
+    if founder_id:
+        db_founder = crud.get_founder(db, founder_id)
+        if not db_founder:
+            raise HTTPException(status_code=404, detail="Founder not found")
+    else:
+        db_founders = crud.list_founders(db)
+        if not db_founders:
+            raise HTTPException(status_code=404, detail="No founder available")
+        db_founder = db_founders[0]
     founder_id = db_founder.id
     all_items = crud.list_evidence_for_founder(db, founder_id)
     if db_founder.latest_score_snapshot_id:
@@ -744,6 +757,24 @@ def screen_opportunity(opportunity_id: str, db: Session = Depends(get_db)):
         opp.founder_confidence,
     )
     return opp
+
+
+@app.get("/v1/opportunities", response_model=List[OpportunityScreen])
+def list_opportunities(db: Session = Depends(get_db)):
+    db_opps = crud.list_opportunities(db)
+    logger.info("endpoint.list_opportunities count=%s", len(db_opps))
+    return [crud.opportunity_to_pydantic(o) for o in db_opps]
+
+
+@app.get("/v1/opportunities/{opportunity_id}", response_model=OpportunityScreen)
+def get_opportunity_screen(opportunity_id: str, db: Session = Depends(get_db)):
+    logger.info("endpoint.get_opportunity_screen.start opportunity_id=%s", opportunity_id)
+    db_opp = crud.get_opportunity(db, opportunity_id)
+    if not db_opp:
+        logger.warning("endpoint.get_opportunity_screen.not_found opportunity_id=%s", opportunity_id)
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+    logger.info("endpoint.get_opportunity_screen.end opportunity_id=%s", opportunity_id)
+    return crud.opportunity_to_pydantic(db_opp)
 
 
 @app.get("/v1/opportunities/{opportunity_id}/diligence", response_model=List[Claim])
@@ -805,6 +836,21 @@ def seed_demo(db: Session = Depends(get_db)):
         ),
         db,
     )
+
+    # Create a default recurring sourcing schedule for the thesis so the agent keeps collecting leads.
+    schedule_id = f"sch_{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc)
+    default_schedule = SourcingSchedule(
+        id=schedule_id,
+        thesis_id=thesis.id,
+        enabled=True,
+        interval_seconds=3600,
+        max_leads_per_run=10,
+        next_run_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    crud.create_sourcing_schedule(db, default_schedule)
 
     # Create cold-start founder
     founder = create_founder(
@@ -1006,6 +1052,49 @@ def list_sourcing_jobs(
     db_jobs = crud.list_sourcing_jobs(db, thesis_id=thesis_id, status=status)
     logger.info("endpoint.list_sourcing_jobs count=%s", len(db_jobs))
     return [crud.sourcing_job_to_pydantic(j) for j in db_jobs]
+
+
+def _last_dispatch_time() -> Optional[str]:
+    import redis
+
+    redis_url = os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
+    try:
+        client = redis.from_url(redis_url, decode_responses=True)
+        return client.get("sourcing:last_dispatch_at")
+    except Exception:
+        return None
+
+
+@app.get("/v1/sourcing/status")
+def get_sourcing_status(db: Session = Depends(get_db)):
+    """Return the current state of sourcing: schedules, active jobs, recent jobs, and beat health."""
+    schedules = [
+        crud.sourcing_schedule_to_pydantic(s)
+        for s in crud.list_sourcing_schedules(db)
+    ]
+    active_jobs = [
+        crud.sourcing_job_to_pydantic(j)
+        for j in crud.list_sourcing_jobs(db, status="running")
+    ]
+    recent_jobs = [
+        crud.sourcing_job_to_pydantic(j)
+        for j in crud.list_sourcing_jobs(db, limit=10)
+    ]
+    last_dispatch = _last_dispatch_time()
+
+    logger.info(
+        "endpoint.get_sourcing_status schedules=%s active_jobs=%s recent_jobs=%s last_dispatch=%s",
+        len(schedules),
+        len(active_jobs),
+        len(recent_jobs),
+        last_dispatch,
+    )
+    return {
+        "schedules": [s.model_dump(mode="json") for s in schedules],
+        "active_jobs": [j.model_dump(mode="json") for j in active_jobs],
+        "recent_jobs": [j.model_dump(mode="json") for j in recent_jobs],
+        "last_dispatch_at": last_dispatch,
+    }
 
 
 if __name__ == "__main__":

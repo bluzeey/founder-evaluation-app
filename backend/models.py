@@ -193,11 +193,13 @@ class SourcingJob(BaseModel):
     thesis_id: str
     schedule_id: Optional[str] = None
     status: str = "pending"
+    progress: int = 0
     started_at: Optional[datetime] = None
     ended_at: Optional[datetime] = None
     leads_found: int = 0
     leads_added: int = 0
     leads_skipped: int = 0
+    result: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -242,6 +244,7 @@ class FounderPoolItem(BaseModel):
     source_url: Optional[str] = None
     reason: str
     thesis_id: Optional[str] = None
+    job_id: Optional[str] = None
     status: PoolItemStatus = PoolItemStatus.RECOMMENDED
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

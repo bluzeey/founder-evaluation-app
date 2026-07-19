@@ -367,6 +367,7 @@ def pool_item_to_db(item: FounderPoolItem) -> db_models.FounderPoolItem:
         source_url=item.source_url,
         reason=item.reason,
         thesis_id=item.thesis_id,
+        job_id=item.job_id,
         status=item.status.value,
         created_at=item.created_at,
     )
@@ -387,6 +388,7 @@ def pool_item_to_pydantic(db_item: db_models.FounderPoolItem) -> FounderPoolItem
         source_url=db_item.source_url,
         reason=db_item.reason,
         thesis_id=db_item.thesis_id,
+        job_id=db_item.job_id,
         status=PoolItemStatus(db_item.status),
         created_at=db_item.created_at,
     )
@@ -401,10 +403,12 @@ def create_pool_items(db: Session, items: List[FounderPoolItem]) -> List[db_mode
     return db_items
 
 
-def list_pool_items(db: Session, status: Optional[str] = None) -> List[db_models.FounderPoolItem]:
+def list_pool_items(db: Session, status: Optional[str] = None, job_id: Optional[str] = None) -> List[db_models.FounderPoolItem]:
     query = db.query(db_models.FounderPoolItem)
     if status:
         query = query.filter(db_models.FounderPoolItem.status == status)
+    if job_id:
+        query = query.filter(db_models.FounderPoolItem.job_id == job_id)
     return query.order_by(db_models.FounderPoolItem.created_at.desc()).all()
 
 
@@ -502,6 +506,13 @@ def create_or_update_opportunity(db: Session, opp: OpportunityScreen) -> db_mode
 
 def get_opportunity(db: Session, opportunity_id: str) -> Optional[db_models.Opportunity]:
     return db.query(db_models.Opportunity).filter(db_models.Opportunity.id == opportunity_id).first()
+
+
+def list_opportunities(db: Session, founder_id: Optional[str] = None) -> List[db_models.Opportunity]:
+    query = db.query(db_models.Opportunity)
+    if founder_id:
+        query = query.filter(db_models.Opportunity.founder_id == founder_id)
+    return query.order_by(db_models.Opportunity.id).all()
 
 
 # -----------------------------------------------------------------------------
@@ -662,11 +673,13 @@ def sourcing_job_to_db(job: SourcingJob) -> db_models.SourcingJob:
         thesis_id=job.thesis_id,
         schedule_id=job.schedule_id,
         status=job.status,
+        progress=job.progress,
         started_at=job.started_at,
         ended_at=job.ended_at,
         leads_found=job.leads_found,
         leads_added=job.leads_added,
         leads_skipped=job.leads_skipped,
+        result=job.result,
         error_message=job.error_message,
         created_at=job.created_at,
     )
@@ -678,11 +691,13 @@ def sourcing_job_to_pydantic(db_job: db_models.SourcingJob) -> SourcingJob:
         thesis_id=db_job.thesis_id,
         schedule_id=db_job.schedule_id,
         status=db_job.status,
+        progress=db_job.progress,
         started_at=db_job.started_at,
         ended_at=db_job.ended_at,
         leads_found=db_job.leads_found,
         leads_added=db_job.leads_added,
         leads_skipped=db_job.leads_skipped,
+        result=db_job.result,
         error_message=db_job.error_message,
         created_at=db_job.created_at,
     )

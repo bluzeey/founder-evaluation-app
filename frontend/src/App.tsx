@@ -8,6 +8,7 @@ import {
   Gavel,
   SlidersHorizontal,
   ShieldCheck,
+  Zap,
 } from "lucide-react";
 import Discovery from "@/pages/Discovery";
 import Apply from "@/pages/Apply";
@@ -16,9 +17,11 @@ import DealRoom from "@/pages/DealRoom";
 import Decisions from "@/pages/Decisions";
 import Thesis from "@/pages/Thesis";
 import Validation from "@/pages/Validation";
+import Sourcing from "@/pages/Sourcing";
 
 const NAV = [
   { path: "/discovery", label: "Discovery", icon: Inbox },
+  { path: "/sourcing", label: "Sourcing", icon: Zap },
   { path: "/apply", label: "Apply", icon: FileInput },
   { path: "/cases", label: "Cases", icon: FolderOpen },
   { path: "/decisions", label: "Decisions", icon: Gavel },
@@ -78,6 +81,7 @@ function App() {
             <Routes>
               <Route path="/" element={<Navigate to="/discovery" replace />} />
               <Route path="/discovery" element={<Discovery />} />
+              <Route path="/sourcing" element={<Sourcing />} />
               <Route path="/apply" element={<Apply />} />
               <Route path="/cases" element={<Cases />} />
               <Route path="/cases/:caseId" element={<DealRoom />} />

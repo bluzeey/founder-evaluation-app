@@ -168,3 +168,30 @@ def test_dispatch_sourcing_jobs_respects_due_time(client, thesis):
 
     r = client.get("/v1/sourcing/jobs")
     assert len(r.json()) >= 1
+
+
+def test_seed_creates_default_sourcing_schedule(client):
+    r = client.post("/v1/seed")
+    assert r.status_code == 200
+    thesis_id = r.json()["thesis_id"]
+
+    r = client.get("/v1/sourcing/schedules")
+    assert r.status_code == 200
+    schedules = r.json()
+    assert any(s["thesis_id"] == thesis_id for s in schedules)
+
+
+def test_sourcing_status_endpoint(client, thesis):
+    r = client.post(
+        "/v1/sourcing/schedules",
+        json={"thesis_id": thesis["id"], "interval_seconds": 3600},
+    )
+    assert r.status_code == 200
+
+    r = client.get("/v1/sourcing/status")
+    assert r.status_code == 200
+    data = r.json()
+    assert "schedules" in data
+    assert "active_jobs" in data
+    assert "recent_jobs" in data
+    assert len(data["schedules"]) >= 1

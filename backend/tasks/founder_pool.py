@@ -148,7 +148,8 @@ def refresh_founder_pool(
                 db,
                 job_id,
                 {
-                    "status": "running",
+                    "status": "searching",
+                    "progress": 10,
                     "started_at": datetime.now(timezone.utc),
                 },
             )
@@ -165,6 +166,17 @@ def refresh_founder_pool(
         )
 
         recommendations = result.get("recommendations", []) or []
+
+        if job_id:
+            crud.update_sourcing_job(
+                db,
+                job_id,
+                {
+                    "status": "deduplicating",
+                    "progress": 50,
+                    "leads_found": len(recommendations),
+                },
+            )
 
         # Build a set of existing dedup keys across the whole pool.
         existing_keys = {_dedup_key(crud.pool_item_to_pydantic(item)) for item in existing}
@@ -184,6 +196,7 @@ def refresh_founder_pool(
                 source_url=rec.get("source_url") or None,
                 reason=rec.get("reason", "") or "",
                 thesis_id=thesis_id,
+                job_id=job_id,
             )
             key = _dedup_key(item)
             if (
@@ -204,6 +217,16 @@ def refresh_founder_pool(
         # Replace existing recommended items with the new batch when we have
         # valid new candidates; otherwise keep the old recommendations so the
         # pool does not empty unexpectedly. Approved/dismissed items are kept.
+        if job_id:
+            crud.update_sourcing_job(
+                db,
+                job_id,
+                {
+                    "status": "persisting",
+                    "progress": 80,
+                },
+            )
+
         if new_items:
             db.query(db_models.FounderPoolItem).filter(
                 db_models.FounderPoolItem.status == PoolItemStatus.RECOMMENDED.value
@@ -220,10 +243,15 @@ def refresh_founder_pool(
                 job_id,
                 {
                     "status": "completed",
+                    "progress": 100,
                     "ended_at": datetime.now(timezone.utc),
                     "leads_found": len(recommendations),
                     "leads_added": len(new_items),
                     "leads_skipped": skipped,
+                    "result": {
+                        "recommendations": recommendations,
+                        "added": [item.model_dump(mode="json") for item in new_items],
+                    },
                 },
             )
 
@@ -242,6 +270,7 @@ def refresh_founder_pool(
                 job_id,
                 {
                     "status": "failed",
+                    "progress": 0,
                     "ended_at": datetime.now(timezone.utc),
                     "error_message": str(exc),
                 },
@@ -330,6 +359,13 @@ def dispatch_sourcing_jobs(self) -> Dict[str, Any]:
                     "next_run_at": next_run.isoformat(),
                 }
             )
+
+        # Track the last successful dispatch time in Redis for health checks.
+        try:
+            client = _redis_client()
+            client.set("sourcing:last_dispatch_at", now.isoformat())
+        except Exception as exc:
+            logger.warning("founder_pool.dispatch_sourcing_jobs.redis_health_failed error=%s", exc)
 
         logger.info(
             "founder_pool.dispatch_sourcing_jobs.end dispatched=%s",
