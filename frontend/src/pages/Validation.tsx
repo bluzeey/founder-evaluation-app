@@ -13,10 +13,11 @@ export default function Validation() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-ink">Validation summary</h1>
-          <p className="text-sm text-slate-500">Deterministic checks over the demo data set.</p>
+          <div className="label mb-1">Validation summary</div>
+          <h1 className="text-2xl font-bold text-ink">System audit</h1>
+          <p className="text-sm text-concrete">Deterministic checks over the demo data set.</p>
         </div>
         <DemoBadge />
       </div>
@@ -55,14 +56,14 @@ export default function Validation() {
       </div>
 
       <div className="panel space-y-3">
-        <h3 className="text-lg font-semibold text-ink">Details</h3>
+        <h3 className="font-display text-lg font-semibold text-ink">Details</h3>
         {summary.details.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-verified">
             <CheckCircle2 size={16} /> All deterministic checks passed.
           </div>
         ) : (
           summary.details.map((d, i) => (
-            <div key={i} className="flex items-start gap-2 text-sm text-red-700">
+            <div key={i} className="flex items-start gap-2 text-sm text-contradiction">
               <XCircle size={16} className="mt-0.5" /> {d}
             </div>
           ))
@@ -70,7 +71,7 @@ export default function Validation() {
       </div>
 
       <div className="panel space-y-3">
-        <h3 className="text-lg font-semibold text-ink">24-hour processing timeline</h3>
+        <h3 className="font-display text-lg font-semibold text-ink">24-hour processing timeline</h3>
         <div className="space-y-2">
           <Step done label="Ingestion" detail="Deck / form / web claims extracted" />
           <Step done label="Validator" detail="Contradictions and quarantines flagged" />
@@ -87,8 +88,8 @@ function MetricCard({ label, value, ok }: { label: string; value: string; ok: bo
   return (
     <div className={`panel flex items-center justify-between ${ok ? "border-l-4 border-l-verified" : "border-l-4 border-l-contradiction"}`}>
       <div>
-        <div className="text-xs text-slate-500">{label}</div>
-        <div className="text-xl font-bold tabular text-ink">{value}</div>
+        <div className="label">{label}</div>
+        <div className="font-display text-xl font-bold tabular text-ink">{value}</div>
       </div>
       {ok ? <CheckCircle2 size={24} className="text-verified" /> : <AlertTriangle size={24} className="text-contradiction" />}
     </div>
@@ -98,10 +99,10 @@ function MetricCard({ label, value, ok }: { label: string; value: string; ok: bo
 function Step({ done, label, detail }: { done: boolean; label: string; detail: string }) {
   return (
     <div className="flex items-start gap-3">
-      <div className={`mt-0.5 h-2 w-2 rounded-full ${done ? "bg-verified" : "bg-slate-300"}`} />
+      <div className={`mt-0.5 h-2 w-2 rounded-full ${done ? "bg-verified" : "bg-concrete/40"}`} />
       <div className="text-sm">
-        <span className={`font-medium ${done ? "text-ink" : "text-slate-500"}`}>{label}</span>
-        <span className="text-slate-500"> — {detail}</span>
+        <span className={`font-medium ${done ? "text-ink" : "text-concrete"}`}>{label}</span>
+        <span className="text-concrete"> — {detail}</span>
       </div>
     </div>
   );

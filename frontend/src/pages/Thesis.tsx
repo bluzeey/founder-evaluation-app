@@ -17,17 +17,18 @@ export default function Thesis() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-ink">Thesis configuration</h1>
-          <p className="text-sm text-slate-500">Sector, stage, geography, check size, ownership, and exclusions.</p>
+          <div className="label mb-1">Thesis configuration</div>
+          <h1 className="text-2xl font-bold text-ink">Investment mandate</h1>
+          <p className="text-sm text-concrete">Sector, stage, geography, check size, ownership, and exclusions.</p>
         </div>
         <DemoBadge />
       </div>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <div className="panel space-y-4">
-          <h3 className="text-lg font-semibold text-ink">Settings</h3>
+          <h3 className="font-display text-lg font-semibold text-ink">Settings</h3>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Sector" value={thesis.sector.join(", ")} />
             <Field label="Stage" value={thesis.stage.join(", ")} />
@@ -38,26 +39,26 @@ export default function Thesis() {
           </div>
           <div>
             <div className="label mb-1.5">Exclusions</div>
-            <ul className="list-inside list-disc text-sm text-slate-700">
+            <ul className="list-inside list-disc text-sm text-ink/80">
               {thesis.exclusions.map((e) => (
                 <li key={e}>{e}</li>
               ))}
             </ul>
           </div>
-          <div className="text-xs text-slate-500">
+          <div className="text-xs text-concrete">
             Default check size is $100,000. Target one investment decision every 4–5 days.
           </div>
         </div>
 
         <div className="panel space-y-4">
-          <h3 className="text-lg font-semibold text-ink">Compound query</h3>
+          <h3 className="font-display text-lg font-semibold text-ink">Compound query</h3>
           <textarea
-            className="h-24 w-full rounded-lg border border-slate-300 p-3 text-sm"
+            className="h-24 w-full rounded-sm border border-concrete/30 bg-paper p-3 text-sm font-sans outline-none"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-            <div className="text-[10px] font-semibold uppercase text-slate-500">Parsed filters</div>
+          <div className="rounded-sm border border-concrete/20 bg-manila/30 p-3">
+            <div className="label">Parsed filters</div>
             <div className="mt-2 flex flex-wrap gap-2">
               {parsed.sector?.map((s) => <Badge key={s} text={s} />)}
               {parsed.stage?.map((s) => <Badge key={s} text={s} />)}
@@ -65,40 +66,40 @@ export default function Thesis() {
               <Badge text={`$${(parsed.checkSize ?? DEFAULT_CHECK_SIZE).toLocaleString()}`} />
               <Badge text={parsed.riskAppetite ?? "MODERATE"} />
             </div>
-            <div className="mt-2 text-xs text-slate-600">
+            <div className="mt-2 text-xs text-concrete">
               Keywords: {parsed.keywords.join(", ")}
             </div>
           </div>
-          <div className="text-xs text-slate-500">
+          <div className="text-xs text-concrete">
             This is keyword-based parsing with transparent filters, not model reasoning presented as inference.
           </div>
         </div>
       </div>
 
       <div className="panel space-y-4">
-        <h3 className="text-lg font-semibold text-ink">Query results</h3>
+        <h3 className="font-display text-lg font-semibold text-ink">Query results</h3>
         <div className="space-y-3">
           {results.map((r) =>
             r ? (
               <div
                 key={r.caseId}
-                className={`flex items-center justify-between rounded-lg border p-3 ${
-                  r.match.eligible ? "border-green-200 bg-green-50" : "border-slate-200 bg-white"
+                className={`flex items-center justify-between rounded-sm border p-3 ${
+                  r.match.eligible ? "border-verified/30 bg-verified/10" : "border-concrete/20 bg-paper"
                 }`}
               >
                 <div>
-                  <div className="font-semibold text-ink">
+                  <div className="font-sans font-semibold text-ink">
                     {r.company.name} · {r.company.sector} · {r.company.stage} · {r.company.geography}
                   </div>
-                  <div className="text-xs text-slate-600">
+                  <div className="text-xs text-concrete">
                     Matches: {r.match.matches.join(", ") || "none"} · Mismatches: {r.match.mismatches.join(", ") || "none"}
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className={`text-sm font-semibold ${r.match.eligible ? "text-verified" : "text-slate-500"}`}>
+                  <div className={`text-sm font-semibold ${r.match.eligible ? "text-verified" : "text-concrete"}`}>
                     {r.match.eligible ? "Eligible" : "Ineligible"}
                   </div>
-                  <div className="text-xs text-slate-500">Check ${r.checkSize.toLocaleString()}</div>
+                  <div className="text-xs text-concrete">Check ${r.checkSize.toLocaleString()}</div>
                 </div>
               </div>
             ) : null
@@ -112,12 +113,16 @@ export default function Thesis() {
 function Field({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-[10px] font-semibold uppercase text-slate-500">{label}</div>
+      <div className="label">{label}</div>
       <div className="text-sm font-medium text-ink">{value}</div>
     </div>
   );
 }
 
 function Badge({ text }: { text: string }) {
-  return <span className="rounded bg-white px-2 py-0.5 text-xs font-medium text-ink border border-slate-200">{text}</span>;
+  return (
+    <span className="rounded-sm border border-concrete/20 bg-paper px-2 py-0.5 text-xs font-mono font-medium text-ink">
+      {text}
+    </span>
+  );
 }

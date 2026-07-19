@@ -14,26 +14,10 @@ const DEMO_DECKS = [
 ];
 
 const SECTIONS = [
-  {
-    id: "founder",
-    title: "Founder and team",
-    fields: ["Founder name", "Founder email", "LinkedIn", "GitHub", "Team size"],
-  },
-  {
-    id: "idea",
-    title: "Idea and market",
-    fields: ["Problem", "Target customer", "Market geography", "Competition"],
-  },
-  {
-    id: "product",
-    title: "Product and user evidence",
-    fields: ["Product URL", "Demo video", "User feedback", "Usage metrics"],
-  },
-  {
-    id: "business",
-    title: "Business, distribution, economics, traction, and scale",
-    fields: ["Revenue", "Go-to-market", "Check size", "Valuation cap", "Distribution plan"],
-  },
+  { id: "founder", title: "Founder and team", fields: ["Founder name", "Founder email", "LinkedIn", "GitHub", "Team size"] },
+  { id: "idea", title: "Idea and market", fields: ["Problem", "Target customer", "Market geography", "Competition"] },
+  { id: "product", title: "Product and user evidence", fields: ["Product URL", "Demo video", "User feedback", "Usage metrics"] },
+  { id: "business", title: "Business, distribution, economics, traction, and scale", fields: ["Revenue", "Go-to-market", "Check size", "Valuation cap", "Distribution plan"] },
 ];
 
 export default function Apply() {
@@ -77,10 +61,11 @@ export default function Apply() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-ink">Inbound application</h1>
-          <p className="text-sm text-slate-500">Upload a deck and answer follow-up questions. Every answer becomes a claim.</p>
+          <div className="label mb-1">Inbound application</div>
+          <h1 className="text-2xl font-bold text-ink">Drop a deck on the desk</h1>
+          <p className="text-sm text-concrete">Upload a deck and answer follow-up questions. Every answer becomes a claim.</p>
         </div>
         <DemoBadge />
       </div>
@@ -90,7 +75,7 @@ export default function Apply() {
           <div>
             <label className="label mb-1.5 block">Company name</label>
             <input
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              className="w-full rounded-sm border border-concrete/30 bg-paper px-3 py-2 text-sm font-sans outline-none"
               placeholder="Acme AI"
               value={company}
               onChange={(e) => setCompany(e.target.value)}
@@ -99,7 +84,7 @@ export default function Apply() {
           <div>
             <label className="label mb-1.5 block">Founder name</label>
             <input
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              className="w-full rounded-sm border border-concrete/30 bg-paper px-3 py-2 text-sm font-sans outline-none"
               placeholder="Jane Doe"
               value={founder}
               onChange={(e) => setFounder(e.target.value)}
@@ -108,7 +93,7 @@ export default function Apply() {
           <div>
             <label className="label mb-1.5 block">Deck (demo fixtures)</label>
             <select
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              className="w-full rounded-sm border border-concrete/30 bg-paper px-3 py-2 text-sm font-sans outline-none"
               value={deckName}
               onChange={(e) => setDeckName(e.target.value)}
             >
@@ -122,7 +107,7 @@ export default function Apply() {
           <div>
             <label className="label mb-1.5 block">Product URL</label>
             <input
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              className="w-full rounded-sm border border-concrete/30 bg-paper px-3 py-2 text-sm font-sans outline-none"
               placeholder="https://"
               value={productUrl}
               onChange={(e) => setProductUrl(e.target.value)}
@@ -137,7 +122,7 @@ export default function Apply() {
             checked={consent}
             onChange={(e) => setConsent(e.target.checked)}
           />
-          <label htmlFor="consent" className="text-sm text-slate-700">
+          <label htmlFor="consent" className="text-sm text-ink/80">
             I consent to having this deck parsed into structured claims for investor review.
           </label>
         </div>
@@ -147,7 +132,7 @@ export default function Apply() {
             type="button"
             onClick={handleExtract}
             disabled={loading || !deckName}
-            className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-sm border border-concrete/30 bg-paper px-4 py-2.5 text-sm font-sans font-medium text-ink hover:bg-manila/40 disabled:opacity-50"
           >
             {loading ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
             {loading ? "Extracting…" : "Extract deck claims"}
@@ -155,7 +140,7 @@ export default function Apply() {
           <button
             type="submit"
             disabled={loading || !company || !founder || !consent}
-            className="flex items-center gap-2 rounded-lg bg-action px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-sm bg-action px-4 py-2.5 text-sm font-sans font-medium text-paper hover:bg-action-dark disabled:opacity-50"
           >
             {loading ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
             Submit application
@@ -163,29 +148,29 @@ export default function Apply() {
         </div>
 
         {extraction && (
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+          <div className="rounded-sm border border-concrete/20 bg-manila/30 p-4 text-sm text-ink/80">
             <div className="flex items-center gap-2 font-semibold text-ink">
               <FileText size={16} /> Extraction result
             </div>
             <div className="mt-2 grid grid-cols-3 gap-3 text-xs">
-              <div className="rounded bg-white p-2 border border-slate-200">
-                <div className="text-slate-500">Slides</div>
-                <div className="font-semibold text-ink">{extraction.slides.length}</div>
+              <div className="rounded-sm border border-concrete/20 bg-paper p-2">
+                <div className="text-concrete">Slides</div>
+                <div className="font-display font-semibold text-ink">{extraction.slides.length}</div>
               </div>
-              <div className="rounded bg-white p-2 border border-slate-200">
-                <div className="text-slate-500">Claims</div>
-                <div className="font-semibold text-ink">{deckClaims.length}</div>
+              <div className="rounded-sm border border-concrete/20 bg-paper p-2">
+                <div className="text-concrete">Claims</div>
+                <div className="font-display font-semibold text-ink">{deckClaims.length}</div>
               </div>
-              <div className="rounded bg-white p-2 border border-slate-200">
-                <div className="text-slate-500">Missing sections</div>
-                <div className="font-semibold text-ink">{extraction.missingSections.length}</div>
+              <div className="rounded-sm border border-concrete/20 bg-paper p-2">
+                <div className="text-concrete">Missing sections</div>
+                <div className="font-display font-semibold text-ink">{extraction.missingSections.length}</div>
               </div>
             </div>
           </div>
         )}
 
         {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <div className="rounded-sm border border-contradiction/30 bg-contradiction/10 p-3 text-sm text-contradiction">
             <AlertCircle size={16} className="inline" /> {error}
           </div>
         )}
@@ -193,38 +178,38 @@ export default function Apply() {
 
       {extraction && (
         <div className="panel space-y-4">
-          <h3 className="text-lg font-semibold text-ink">Deck claims</h3>
+          <h3 className="font-display text-lg font-semibold text-ink">Deck claims</h3>
           <DeckClaimTable claims={deckClaims} />
-          <div className="text-xs text-slate-500">
+          <div className="text-xs text-concrete">
             Projections and assumptions are shown as distinct from verified facts. Click a claim to see its slide citation.
           </div>
         </div>
       )}
 
       <div className="panel space-y-4">
-        <h3 className="text-lg font-semibold text-ink">Application follow-up</h3>
-        <p className="text-sm text-slate-500">
+        <h3 className="font-display text-lg font-semibold text-ink">Application follow-up</h3>
+        <p className="text-sm text-concrete">
           Questions already answered by the deck are marked. Only missing decision-critical follow-ups are shown by default.
         </p>
         <div className="space-y-3">
           {SECTIONS.map((section) => (
-            <div key={section.id} className="rounded-lg border border-slate-200">
-              <button className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-semibold text-ink hover:bg-slate-50">
+            <div key={section.id} className="rounded-sm border border-concrete/20">
+              <button className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-sans font-semibold text-ink hover:bg-manila/30">
                 {section.title}
-                <span className="text-xs font-normal text-slate-500">
+                <span className="text-xs font-normal text-concrete">
                   {section.fields.filter((f) => !answeredByDeck(f)).length} critical follow-ups
                 </span>
               </button>
-              <div className="border-t border-slate-100 px-4 py-3">
+              <div className="border-t border-concrete/10 px-4 py-3">
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   {section.fields.map((field) => (
                     <div key={field} className="flex items-center gap-2">
                       <input
-                        className="flex-1 rounded border border-slate-300 px-2 py-1 text-sm"
+                        className="flex-1 rounded-sm border border-concrete/30 bg-paper px-2 py-1 text-sm font-sans outline-none"
                         placeholder={field}
                       />
                       {answeredByDeck(field) && (
-                        <span className="rounded bg-green-50 px-1.5 py-0.5 text-[10px] font-semibold text-verified">
+                        <span className="rounded-sm bg-verified/10 px-1.5 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wide text-verified">
                           Deck
                         </span>
                       )}

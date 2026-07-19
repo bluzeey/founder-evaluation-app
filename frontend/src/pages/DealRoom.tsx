@@ -67,7 +67,7 @@ export default function DealRoom() {
   if (!investmentCase) {
     return (
       <div className="panel py-12 text-center">
-        <p className="text-slate-600">Case not found.</p>
+        <p className="text-concrete">Case not found.</p>
         <Link to="/cases" className="text-action hover:underline">
           Back to cases
         </Link>
@@ -120,7 +120,7 @@ export default function DealRoom() {
         </Link>
       </div>
 
-      <div className="panel space-y-4">
+      <div className="panel space-y-4 border-manila-dark/30 bg-manila/20">
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
             <div className="flex items-center gap-2">
@@ -129,19 +129,20 @@ export default function DealRoom() {
               </h1>
               <DemoBadge />
             </div>
-            <p className="text-sm text-slate-600">
+            <p className="text-sm text-concrete">
               {founders.map((f) => `${f?.name} (${f?.role})`).join(", ")} · {investmentCase.inboundOrOutbound} ·{" "}
               {investmentCase.sourceChannel}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <CaseStatusBadge status={investmentCase.status} />
-            <div className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm">
-              <span className="text-slate-500">Owner:</span> <span className="font-medium text-ink">{investmentCase.owner}</span>
+            <div className="rounded-sm border border-concrete/20 bg-paper px-3 py-1.5 text-sm">
+              <span className="text-concrete">Owner:</span>{" "}
+              <span className="font-sans font-medium text-ink">{investmentCase.owner}</span>
             </div>
-            <div className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm">
-              <span className="text-slate-500">Thesis:</span>{" "}
-              <span className={`font-medium ${investmentCase.thesisResult === "ELIGIBLE" ? "text-verified" : "text-uncertain"}`}>
+            <div className="rounded-sm border border-concrete/20 bg-paper px-3 py-1.5 text-sm">
+              <span className="text-concrete">Thesis:</span>{" "}
+              <span className={`font-sans font-medium ${investmentCase.thesisResult === "ELIGIBLE" ? "text-verified" : "text-uncertain"}`}>
                 {investmentCase.thesisResult}
               </span>
             </div>
@@ -149,26 +150,26 @@ export default function DealRoom() {
         </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-lg border border-slate-200 p-3">
-            <div className="text-[10px] font-semibold uppercase text-slate-500">Operational priority</div>
-            <div className="text-xl font-bold tabular text-ink">{priority}</div>
+          <div className="rounded-sm border border-concrete/20 bg-paper p-3">
+            <div className="label">Operational priority</div>
+            <div className="font-display text-xl font-bold tabular text-ink">{priority}</div>
           </div>
-          <div className="rounded-lg border border-slate-200 p-3">
-            <div className="text-[10px] font-semibold uppercase text-slate-500">Routed state</div>
+          <div className="rounded-sm border border-concrete/20 bg-paper p-3">
+            <div className="label">Routed state</div>
             <div className="text-sm font-semibold text-ink">{routed}</div>
           </div>
-          <div className="rounded-lg border border-slate-200 p-3">
-            <div className="text-[10px] font-semibold uppercase text-slate-500">Next action</div>
+          <div className="rounded-sm border border-concrete/20 bg-paper p-3">
+            <div className="label">Next action</div>
             <div className="text-sm text-ink">{investmentCase.nextAction}</div>
           </div>
-          <div className="rounded-lg border border-slate-200 p-3">
-            <div className="text-[10px] font-semibold uppercase text-slate-500">24h SLA</div>
+          <div className="rounded-sm border border-concrete/20 bg-paper p-3">
+            <div className="label">24h SLA</div>
             <TimeRemaining deadline={investmentCase.decisionDeadline} />
           </div>
         </div>
 
         {isHold && (
-          <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <div className="flex items-start gap-3 rounded-sm border border-contradiction/30 bg-contradiction/10 p-3 text-sm text-contradiction">
             <AlertTriangle size={18} />
             <div>
               <div className="font-semibold">Validation hold</div>
@@ -178,7 +179,7 @@ export default function DealRoom() {
         )}
       </div>
 
-      <div className="border-b border-slate-200">
+      <div className="border-b border-concrete/20">
         <div className="flex gap-1 overflow-x-auto">
           {TABS.map((tab) => {
             const Icon = tab.icon;
@@ -186,15 +187,15 @@ export default function DealRoom() {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 whitespace-nowrap border-b-2 px-4 py-2 text-sm font-medium transition ${
+                className={`flex items-center gap-2 whitespace-nowrap border-b-2 px-4 py-2 text-sm font-sans font-medium transition ${
                   activeTab === tab.id
                     ? "border-action text-action"
-                    : "border-transparent text-slate-500 hover:text-ink"
+                    : "border-transparent text-concrete hover:text-ink"
                 }`}
               >
                 <Icon size={16} /> {tab.label}
                 {tab.id === "evidence" && contradictedClaims.length > 0 && (
-                  <span className="rounded-full bg-red-100 px-1.5 py-0 text-[10px] font-bold text-contradiction">
+                  <span className="rounded-full bg-contradiction/10 px-1.5 py-0 text-[10px] font-bold text-contradiction">
                     {contradictedClaims.length}
                   </span>
                 )}
@@ -231,8 +232,8 @@ export default function DealRoom() {
           {deckExtraction ? (
             <div className="panel space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-ink">Deck extraction</h3>
-                <span className="rounded bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600">
+                <h3 className="font-display text-lg font-semibold text-ink">Deck extraction</h3>
+                <span className="rounded-sm bg-manila/60 px-2 py-1 text-[10px] font-mono font-semibold text-concrete">
                   Demo fixture
                 </span>
               </div>
@@ -241,18 +242,17 @@ export default function DealRoom() {
                 selectedId={selectedClaimId}
                 onSelect={(id) => {
                   setSelectedClaimId(id);
-                  // Scroll to slide could be implemented here.
                 }}
               />
               {deckExtraction.missingSections.length > 0 && (
-                <div className="text-sm text-slate-600">
-                  <span className="font-semibold">Missing sections:</span>{" "}
+                <div className="text-sm text-concrete">
+                  <span className="font-semibold text-ink">Missing sections:</span>{" "}
                   {deckExtraction.missingSections.join(", ")}
                 </div>
               )}
             </div>
           ) : (
-            <div className="panel text-sm text-slate-500">No deck uploaded for this case.</div>
+            <div className="panel text-sm text-concrete">No deck uploaded for this case.</div>
           )}
         </div>
       )}
@@ -267,7 +267,7 @@ export default function DealRoom() {
                 <ClaimStatusBadge status={selectedClaim.status} />
                 <TrustBadge score={selectedClaim.trustScore} />
               </div>
-              <div className="mt-3 text-sm text-slate-600">
+              <div className="mt-3 text-sm text-concrete">
                 Sources: {" "}
                 {selectedClaim.sourceRefs.map((s) => `${s.title}${s.slide ? ` (slide ${s.slide})` : ""}`).join(", ")}
               </div>
@@ -279,7 +279,7 @@ export default function DealRoom() {
             </div>
           )}
           <div className="panel space-y-4">
-            <h3 className="text-lg font-semibold text-ink">All claims</h3>
+            <h3 className="font-display text-lg font-semibold text-ink">All claims</h3>
             <DeckClaimTable
               claims={investmentCase.claims}
               selectedId={selectedClaimId}
@@ -292,9 +292,9 @@ export default function DealRoom() {
                 <AlertTriangle size={18} /> Contradictions
               </div>
               {contradictedClaims.map((c) => (
-                <div key={c.id} className="rounded-lg bg-red-50 p-3 text-sm">
-                  <div className="font-medium text-red-800">{c.text}</div>
-                  <div className="mt-1 text-red-700">
+                <div key={c.id} className="rounded-sm bg-contradiction/10 p-3 text-sm">
+                  <div className="font-medium text-contradiction">{c.text}</div>
+                  <div className="mt-1 text-contradiction/80">
                     Source: {c.sourceRefs.map((s) => s.title).join(", ")} · Trust: {Math.round(c.trustScore * 100)}%
                   </div>
                 </div>
@@ -302,7 +302,7 @@ export default function DealRoom() {
               <button
                 onClick={handleResolve}
                 disabled={resolving}
-                className="rounded-lg bg-action px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                className="rounded-sm bg-action px-4 py-2 text-sm font-sans font-medium text-paper hover:bg-action-dark disabled:opacity-50"
               >
                 {resolving ? "Resolving…" : "Resolve contradiction (demo)"}
               </button>
@@ -359,59 +359,59 @@ function ActionPanel({
     <div className="panel space-y-4">
       <div className="text-sm font-semibold text-ink">Actions</div>
       <div className="flex flex-wrap gap-2">
-        <button className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        <button className="rounded-sm border border-concrete/30 bg-paper px-4 py-2 text-sm font-sans font-medium text-ink hover:bg-manila/40">
           <UserCog size={16} className="inline" /> Assign diligence
         </button>
-        <button className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        <button className="rounded-sm border border-concrete/30 bg-paper px-4 py-2 text-sm font-sans font-medium text-ink hover:bg-manila/40">
           <MessageSquare size={16} className="inline" /> Ask founder
         </button>
         <button
           onClick={onResolve}
           disabled={resolving}
-          className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          className="rounded-sm border border-concrete/30 bg-paper px-4 py-2 text-sm font-sans font-medium text-ink hover:bg-manila/40 disabled:opacity-50"
         >
           <CheckCircle2 size={16} className="inline" /> Resolve contradiction
         </button>
-        <button className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        <button className="rounded-sm border border-concrete/30 bg-paper px-4 py-2 text-sm font-sans font-medium text-ink hover:bg-manila/40">
           <TrendingUp size={16} className="inline" /> Advance to Associate
         </button>
         <button
           onClick={() => onDecision("MONITOR")}
-          className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          className="rounded-sm border border-concrete/30 bg-paper px-4 py-2 text-sm font-sans font-medium text-ink hover:bg-manila/40"
         >
           <Monitor size={16} className="inline" /> Monitor
         </button>
         <button
           onClick={() => onDecision("DECLINE")}
-          className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+          className="rounded-sm border border-concrete/30 bg-paper px-4 py-2 text-sm font-sans font-medium text-contradiction hover:bg-contradiction/10"
         >
           <XCircle size={16} className="inline" /> Decline
         </button>
       </div>
       {role === "PARTNER" && (
-        <div className="flex flex-wrap gap-2 border-t border-slate-200 pt-4">
+        <div className="flex flex-wrap gap-2 border-t border-concrete/10 pt-4">
           <button
             onClick={() => onDecision("INVEST")}
             disabled={isHold}
-            className="rounded-lg bg-green-600 px-5 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-sm bg-verified px-5 py-2 text-sm font-sans font-medium text-paper hover:bg-verified/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Invest $100K
           </button>
           <button
             onClick={() => onDecision("DECLINE")}
-            className="rounded-lg bg-red-600 px-5 py-2 text-sm font-medium text-white hover:bg-red-700"
+            className="rounded-sm bg-contradiction px-5 py-2 text-sm font-sans font-medium text-paper hover:bg-contradiction/90"
           >
             Decline
           </button>
           <button
             onClick={() => onDecision("MONITOR")}
-            className="rounded-lg border border-slate-300 bg-white px-5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            className="rounded-sm border border-concrete/30 bg-paper px-5 py-2 text-sm font-sans font-medium text-ink hover:bg-manila/40"
           >
             Monitor
           </button>
           <button
             onClick={() => onDecision("REQUEST_EVIDENCE")}
-            className="rounded-lg border border-slate-300 bg-white px-5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            className="rounded-sm border border-concrete/30 bg-paper px-5 py-2 text-sm font-sans font-medium text-ink hover:bg-manila/40"
           >
             Request evidence
           </button>
@@ -432,7 +432,7 @@ function AgentCard({ title, output }: { title: string; output: unknown }) {
       <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-ink">
         <Sparkles size={16} className="text-uncertain" /> {title}
       </div>
-      <pre className="max-h-60 overflow-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-700">
+      <pre className="max-h-60 overflow-auto rounded-sm bg-manila/30 p-3 text-xs text-concrete">
         {JSON.stringify(output, null, 2)}
       </pre>
     </div>

@@ -16,17 +16,17 @@ export function MemoView({ memo }: { memo: CaseMemo }) {
       {memo.contradictions.length > 0 && (
         <Section title="Contradictions and unresolved risks" bullets={memo.contradictions} color="text-contradiction" />
       )}
-      <Section title="Missing information" bullets={memo.missingInformation} color="text-slate-600" />
-      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Recommended next action</div>
+      <Section title="Missing information" bullets={memo.missingInformation} color="text-concrete" />
+      <div className="rounded-sm border border-concrete/20 bg-manila/30 p-3">
+        <div className="label">Recommended next action</div>
         <div className="mt-1 text-sm font-medium text-ink">{memo.recommendedNextAction}</div>
       </div>
       <div>
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Citations</div>
-        <ul className="mt-1 space-y-1 text-xs text-slate-600">
+        <div className="label">Citations</div>
+        <ul className="mt-1 space-y-1 text-xs text-concrete">
           {Object.entries(memo.claimCitations).map(([label, ids]) => (
             <li key={label}>
-              <span className="font-medium">{label}:</span> {ids.join(", ")}
+              <span className="font-medium text-ink">{label}:</span> {ids.join(", ")}
             </li>
           ))}
         </ul>
@@ -48,9 +48,9 @@ function Section({
   return (
     <div>
       <div className="label mb-1.5">{title}</div>
-      <ul className="space-y-1 text-sm text-slate-700">
+      <ul className="space-y-1 text-sm text-ink/80">
         {bullets.map((b, i) => (
-          <li key={i} className={color || "text-slate-700"}>
+          <li key={i} className={color || "text-ink/80"}>
             • {b}
           </li>
         ))}
