@@ -6,20 +6,20 @@ export function DriverCard({ driver, onClaimClick }: { driver: DriverAssessment;
   const supporting = driver.supportingClaimIds.slice(0, 2);
   const opposing = driver.opposingClaimIds.slice(0, 1);
   return (
-    <div className="panel space-y-3">
+    <div className="index-card space-y-3">
       <div className="flex items-center justify-between">
         <div className="label">{DRIVER_LABELS[driver.key]}</div>
         <TrendBadge trend={driver.trend} />
       </div>
       <div className="flex items-baseline gap-3">
-        <span className="text-3xl font-bold tabular text-ink">{driver.score}</span>
-        <span className="text-sm text-slate-500">{Math.round(driver.confidence * 100)}% confidence</span>
+        <span className="font-display text-3xl font-bold tabular text-ink">{driver.score}</span>
+        <span className="text-sm text-concrete">{Math.round(driver.confidence * 100)}% confidence</span>
       </div>
-      <p className="text-sm text-slate-700">{driver.rubricReason}</p>
+      <p className="text-sm text-ink/80">{driver.rubricReason}</p>
       <div className="space-y-2">
         {supporting.length > 0 && (
           <div>
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-verified">Supporting</div>
+            <div className="text-[10px] font-mono font-semibold uppercase tracking-wide text-verified">Supporting</div>
             <ul className="space-y-1">
               {supporting.map((id) => (
                 <li key={id}>
@@ -36,7 +36,7 @@ export function DriverCard({ driver, onClaimClick }: { driver: DriverAssessment;
         )}
         {opposing.length > 0 && (
           <div>
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-contradiction">Opposing</div>
+            <div className="text-[10px] font-mono font-semibold uppercase tracking-wide text-contradiction">Opposing</div>
             <ul className="space-y-1">
               {opposing.map((id) => (
                 <li key={id}>
@@ -53,10 +53,10 @@ export function DriverCard({ driver, onClaimClick }: { driver: DriverAssessment;
         )}
         {driver.missingEvidence.length > 0 && (
           <div>
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Missing</div>
+            <div className="text-[10px] font-mono font-semibold uppercase tracking-wide text-concrete">Missing</div>
             <ul className="space-y-1">
               {driver.missingEvidence.map((m) => (
-                <li key={m} className="text-xs text-slate-600">
+                <li key={m} className="text-xs text-concrete">
                   • {m}
                 </li>
               ))}

@@ -1,3 +1,4 @@
+import logging
 from typing import List
 from datetime import datetime, timezone
 from collections import defaultdict
@@ -11,6 +12,8 @@ from models import (
     REQUIRED_EFFECTIVE_WEIGHT,
     EvidenceStatus,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _effective_weight(item: EvidenceItem) -> float:
@@ -150,6 +153,11 @@ def calculate_founder_score(
     evidence_items: List[EvidenceItem],
     previous_snapshot: ScoreSnapshot = None,
 ) -> ScoreSnapshot:
+    logger.info(
+        "scoring.calculate_founder_score.start founder_id=%s evidence=%s",
+        founder_id,
+        len(evidence_items),
+    )
     by_dimension = defaultdict(list)
     for item in evidence_items:
         by_dimension[item.dimension].append(item)
@@ -191,6 +199,13 @@ def calculate_founder_score(
             f"Evidence items: {len(evidence_items)} total."
         )
 
+    logger.info(
+        "scoring.calculate_founder_score.end founder_id=%s score=%s confidence=%s coverage=%s",
+        founder_id,
+        round(founder_score, 2),
+        round(overall_confidence, 4),
+        round(evidence_coverage, 4),
+    )
     return ScoreSnapshot(
         id=snapshot_id,
         founder_id=founder_id,

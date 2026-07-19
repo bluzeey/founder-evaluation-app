@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import uuid
@@ -7,6 +8,8 @@ from typing import Any, List, Optional
 import httpx
 
 from .prompts import SOCIAL_RESEARCH_SYSTEM_PROMPT
+
+logger = logging.getLogger(__name__)
 
 UMANS_BASE_URL = "https://api.code.umans.ai/v1/chat/completions"
 
@@ -31,6 +34,13 @@ class SocialAgent:
         self.model = model or os.environ.get("UMANS_SOCIAL_MODEL", "umans-coder")
         self.timeout = float(timeout or os.environ.get("UMANS_RESEARCH_TIMEOUT", "60"))
 
+        logger.info(
+            "social_agent.configured provider=%s model=%s timeout=%s",
+            self.websearch_provider,
+            self.model,
+            self.timeout,
+        )
+
     def research(
         self,
         name: str,
@@ -53,8 +63,14 @@ class SocialAgent:
             "X-Umans-Websearch-Provider": self.websearch_provider,
         }
 
+        logger.info(
+            "social_agent.research.start name=%s has_linkedin=%s has_github=%s",
+            name,
+            bool(linkedin_url),
+            bool(github_url),
+        )
         user_message = f"Research this founder's social footprint.\nName: {name}"
-        if linkededin_url:
+        if linkedin_url:
             user_message += f"\nLinkedIn: {linkedin_url}"
         if github_url:
             user_message += f"\nGitHub: {github_url}"
@@ -70,16 +86,27 @@ class SocialAgent:
         }
 
         with httpx.Client(timeout=self.timeout) as client:
+            logger.info("social_agent.research.request name=%s model=%s", name, self.model)
             response = client.post(UMANS_BASE_URL, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()
 
-        return self._parse_response(data)
+        parsed = self._parse_response(data)
+        evidence = parsed.get("evidence", []) or []
+        footprints = parsed.get("footprints", []) or []
+        logger.info(
+            "social_agent.research.end name=%s footprints=%s evidence=%s",
+            name,
+            len(footprints),
+            len(evidence),
+        )
+        return parsed
 
     def _parse_response(self, data: dict[str, Any]) -> dict[str, Any]:
         try:
             choice = data["choices"][0]
         except (KeyError, IndexError) as exc:
+            logger.error("social_agent.parse.unexpected_response data=%s", data)
             raise ValueError(f"Unexpected Umans response shape: {data}") from exc
 
         message = choice.get("message", {})
@@ -92,11 +119,14 @@ class SocialAgent:
             content = content.strip()
 
         if not content:
+            logger.error("social_agent.parse.empty_content")
             raise ValueError("Umans response contained no content")
 
         try:
             parsed = json.loads(content)
         except json.JSONDecodeError as exc:
+            logger.error("social_agent.parse.invalid_json content=%s", content)
             raise ValueError(f"Umans response was not valid JSON:\n{content}") from exc
 
+        logger.info("social_agent.parse.ok")
         return parsed

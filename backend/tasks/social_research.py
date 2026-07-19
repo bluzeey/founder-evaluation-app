@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
@@ -10,6 +11,8 @@ from celery_app import app
 from models import SocialMediaBackground
 from research import SocialAgent, create_social_background
 from scoring import calculate_founder_score
+
+logger = logging.getLogger(__name__)
 
 REDIS_URL = os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
 
@@ -28,6 +31,11 @@ def store_social_background(background: SocialMediaBackground) -> None:
     data = background.model_dump(mode="json")
     data["updated_at"] = datetime.now(timezone.utc).isoformat()
     client.set(_key(background.founder_id), json.dumps(data))
+    logger.info(
+        "social_research.store_background founder_id=%s status=%s",
+        background.founder_id,
+        background.status,
+    )
 
 
 def load_social_background(founder_id: str) -> Optional[SocialMediaBackground]:
@@ -63,6 +71,7 @@ def research_social_background(
         github_url=github_url,
     )
     store_social_background(pending)
+    logger.info("social_research.task.start founder_id=%s task_id=%s", founder_id, self.request.id)
 
     try:
         agent = SocialAgent()
@@ -72,6 +81,7 @@ def research_social_background(
             github_url=github_url,
         )
     except Exception as exc:
+        logger.error("social_research.task.error founder_id=%s error=%s", founder_id, exc)
         failed = SocialMediaBackground(
             id=pending.id,
             founder_id=founder_id,
@@ -98,4 +108,11 @@ def research_social_background(
         )
 
     store_social_background(background)
+    logger.info(
+        "social_research.task.end founder_id=%s status=%s evidence=%s scored=%s",
+        founder_id,
+        background.status,
+        len(background.evidence_items),
+        background.score_snapshot is not None,
+    )
     return background.model_dump(mode="json")

@@ -8,15 +8,15 @@ const trendIcon: Record<Trend, string> = {
 };
 
 const trendColor: Record<Trend, string> = {
-  IMPROVING: "text-verified bg-green-50",
-  DECLINING: "text-contradiction bg-red-50",
-  STABLE: "text-slate-600 bg-slate-100",
-  INSUFFICIENT_HISTORY: "text-uncertain bg-amber-50",
+  IMPROVING: "text-verified bg-verified/10 border-verified/20",
+  DECLINING: "text-contradiction bg-contradiction/10 border-contradiction/20",
+  STABLE: "text-concrete bg-concrete/10 border-concrete/20",
+  INSUFFICIENT_HISTORY: "text-uncertain bg-uncertain/10 border-uncertain/20",
 };
 
 export function TrendBadge({ trend }: { trend: Trend }) {
   return (
-    <span className={`rounded px-2 py-0.5 text-[10px] font-semibold tabular ${trendColor[trend]}`}>
+    <span className={`rounded-sm border px-2 py-0.5 text-[10px] font-mono font-semibold tabular ${trendColor[trend]}`}>
       {trendIcon[trend]} {trend.replace(/_/g, " ")}
     </span>
   );

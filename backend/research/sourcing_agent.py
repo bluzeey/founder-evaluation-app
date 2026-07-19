@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 from typing import Any, List, Optional
@@ -6,6 +7,8 @@ from typing import Any, List, Optional
 import httpx
 
 from .prompts import SOURCING_SYSTEM_PROMPT
+
+logger = logging.getLogger(__name__)
 
 UMANS_BASE_URL = "https://api.code.umans.ai/v1/chat/completions"
 
@@ -24,11 +27,19 @@ class SourcingAgent:
         if not self.api_key:
             raise RuntimeError("UMANS_API_KEY is not set")
 
+        # Always use native web search unless explicitly overridden.
         self.websearch_provider = websearch_provider or os.environ.get(
             "UMANS_WEBSEARCH_PROVIDER", "native"
         )
         self.model = model or os.environ.get("UMANS_SOURCING_MODEL", "umans-coder")
         self.timeout = float(timeout or os.environ.get("UMANS_RESEARCH_TIMEOUT", "60"))
+
+        logger.info(
+            "sourcing_agent.configured provider=%s model=%s timeout=%s",
+            self.websearch_provider,
+            self.model,
+            self.timeout,
+        )
 
     def discover(
         self,
@@ -48,6 +59,14 @@ class SourcingAgent:
         Returns:
             Parsed JSON dict with key "recommendations".
         """
+        logger.info(
+            "sourcing_agent.discover.start sectors=%s stages=%s geographies=%s risk=%s",
+            sectors,
+            stages,
+            geographies,
+            risk_appetite,
+        )
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -73,16 +92,28 @@ class SourcingAgent:
         }
 
         with httpx.Client(timeout=self.timeout) as client:
+            logger.info(
+                "sourcing_agent.discover.request provider=%s model=%s",
+                self.websearch_provider,
+                self.model,
+            )
             response = client.post(UMANS_BASE_URL, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()
 
-        return self._parse_response(data)
+        parsed = self._parse_response(data)
+        recommendations = parsed.get("recommendations", []) or []
+        logger.info(
+            "sourcing_agent.discover.end recommendations=%s",
+            len(recommendations),
+        )
+        return parsed
 
     def _parse_response(self, data: dict[str, Any]) -> dict[str, Any]:
         try:
             choice = data["choices"][0]
         except (KeyError, IndexError) as exc:
+            logger.error("sourcing_agent.discover.unexpected_response data=%s", data)
             raise ValueError(f"Unexpected Umans response shape: {data}") from exc
 
         message = choice.get("message", {})
@@ -95,11 +126,57 @@ class SourcingAgent:
             content = content.strip()
 
         if not content:
+            logger.error("sourcing_agent.discover.empty_content")
             raise ValueError("Umans response contained no content")
 
         try:
             parsed = json.loads(content)
         except json.JSONDecodeError as exc:
+            logger.error("sourcing_agent.discover.invalid_json content=%s", content)
             raise ValueError(f"Umans response was not valid JSON:\n{content}") from exc
 
+        self._validate_recommendations(parsed)
         return parsed
+
+    def _validate_recommendations(self, parsed: dict[str, Any]) -> None:
+        """Ensure recommendations contain the minimum fields for a real candidate."""
+        recommendations = parsed.get("recommendations")
+        if not isinstance(recommendations, list):
+            logger.error(
+                "sourcing_agent.discover.recommendations_not_list type=%s",
+                type(recommendations).__name__,
+            )
+            raise ValueError("Response missing 'recommendations' list")
+
+        if not recommendations:
+            logger.warning("sourcing_agent.discover.empty_recommendations")
+            raise ValueError("Sourcing agent returned empty recommendations")
+
+        valid_count = 0
+        for idx, rec in enumerate(recommendations):
+            name = rec.get("name") if isinstance(rec, dict) else None
+            source_url = rec.get("source_url") if isinstance(rec, dict) else None
+            if name and source_url:
+                valid_count += 1
+            else:
+                logger.warning(
+                    "sourcing_agent.discover.invalid_recommendation idx=%s name=%s source_url=%s",
+                    idx,
+                    name,
+                    source_url,
+                )
+
+        if valid_count == 0:
+            logger.error(
+                "sourcing_agent.discover.no_valid_recommendations count=%s",
+                len(recommendations),
+            )
+            raise ValueError(
+                "No valid recommendations: each recommendation needs a name and source_url"
+            )
+
+        logger.info(
+            "sourcing_agent.discover.validated count=%s valid=%s",
+            len(recommendations),
+            valid_count,
+        )

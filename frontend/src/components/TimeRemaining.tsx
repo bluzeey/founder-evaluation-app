@@ -17,13 +17,13 @@ export function TimeRemaining({ deadline }: { deadline: string }) {
 
   return (
     <div className="flex items-center gap-3">
-      <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-200">
+      <div className="h-2 w-24 overflow-hidden rounded-full bg-concrete/20">
         <div
-          className={`h-full ${duration.isExpired ? "bg-slate-400" : duration.percentRemaining > 25 ? "bg-action" : "bg-contradiction"}`}
+          className={`h-full ${duration.isExpired ? "bg-concrete" : duration.percentRemaining > 25 ? "bg-action" : "bg-contradiction"}`}
           style={{ width: `${duration.percentRemaining}%` }}
         />
       </div>
-      <span className={`text-xs font-semibold tabular ${color}`}>
+      <span className={`text-xs font-mono font-semibold tabular ${color}`}>
         {duration.isExpired
           ? "SLA expired"
           : `${duration.hours.toString().padStart(2, "0")}:${duration.minutes.toString().padStart(2, "0")}:${duration.seconds

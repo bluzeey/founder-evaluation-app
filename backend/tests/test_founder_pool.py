@@ -9,6 +9,7 @@ os.environ["UMANS_API_KEY"] = "test-key"
 
 from main import app
 from models import FounderPoolItem, PoolItemStatus
+from research.sourcing_agent import SourcingAgent
 from tasks.founder_pool import load_founder_pool, refresh_founder_pool, save_founder_pool
 
 
@@ -126,3 +127,53 @@ def test_list_pool_endpoint(client):
     data = response.json()
     assert len(data) == 1
     assert data[0]["name"] == "Dan"
+
+
+@patch("tasks.founder_pool.SourcingAgent")
+def test_refresh_pool_skips_duplicates(mock_agent_cls):
+    save_founder_pool(
+        [
+            FounderPoolItem(
+                id="pool_existing",
+                name="Alice Smith",
+                current_company="BetaCo",
+                reason="Existing",
+                status=PoolItemStatus.RECOMMENDED,
+            )
+        ]
+    )
+    mock_agent = mock_agent_cls.return_value
+    mock_agent.discover.return_value = {
+        "recommendations": [
+            {
+                "name": "Alice Smith",
+                "current_company": "BetaCo",
+                "source_url": "https://example.com/alice",
+                "reason": "Built AI infra tool with early traction",
+            }
+        ]
+    }
+    pool = refresh_founder_pool()
+    assert len(pool) == 1
+    assert pool[0].id == "pool_existing"
+
+
+def test_sourcing_agent_validates_recommendations():
+    agent = SourcingAgent(api_key="test-key")
+
+    with pytest.raises(ValueError):
+        agent._validate_recommendations({})
+
+    with pytest.raises(ValueError):
+        agent._validate_recommendations({"recommendations": []})
+
+    with pytest.raises(ValueError):
+        agent._validate_recommendations({"recommendations": [{"name": "No URL"}]})
+
+    agent._validate_recommendations(
+        {
+            "recommendations": [
+                {"name": "Valid", "source_url": "https://example.com/valid"}
+            ]
+        }
+    )

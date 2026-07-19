@@ -5,9 +5,13 @@
 @layer base {
   body {
     @apply bg-canvas text-ink antialiased;
+    font-feature-settings: "liga" 1, "calt" 1;
   }
-  h1, h2, h3, h4 {
-    @apply font-semibold tracking-tight;
+  h1, h2, h3 {
+    @apply font-display font-semibold tracking-tight;
+  }
+  h4, h5, h6 {
+    @apply font-sans font-semibold tracking-tight;
   }
   .tabular {
     font-variant-numeric: tabular-nums;
@@ -16,9 +20,30 @@
 
 @layer components {
   .panel {
-    @apply rounded-xl border border-slate-200 bg-white p-5 shadow-sm;
+    @apply rounded-sm border border-concrete/30 bg-paper p-5 shadow-paper;
   }
   .label {
-    @apply text-xs font-semibold uppercase tracking-wider text-slate-500;
+    @apply font-mono text-[10px] font-semibold uppercase tracking-wider text-concrete;
+  }
+  .file-tab {
+    @apply relative flex items-center gap-2 border-l-4 border-transparent px-4 py-3 text-sm font-sans font-medium text-ink/70 transition-colors hover:text-ink;
+  }
+  .file-tab-active {
+    @apply border-l-action bg-paper text-ink shadow-paper;
+  }
+  .index-card {
+    @apply rounded-sm border border-concrete/25 bg-paper p-4 shadow-paper transition-shadow hover:shadow-paper-lg;
+  }
+  .stamp {
+    @apply pointer-events-none absolute inset-0 flex items-center justify-center opacity-0;
+  }
+  .stamp-visible {
+    @apply animate-stamp;
+  }
+  .stamp-mark {
+    @apply border-4 border-contradiction/80 px-4 py-2 font-display text-2xl font-bold uppercase tracking-widest text-contradiction/80;
+  }
+  .stamp-invest {
+    @apply border-brass/80 text-brass/80;
   }
 }

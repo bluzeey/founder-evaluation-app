@@ -10,21 +10,24 @@ const ROLES: { value: Role; label: string; description: string }[] = [
 export function RoleSwitcher() {
   const { state, setRole } = useApp();
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-1 shadow-sm">
-      {ROLES.map((r) => (
-        <button
-          key={r.value}
-          onClick={() => setRole(r.value)}
-          title={r.description}
-          className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-            state.user.role === r.value
-              ? "bg-ink text-white"
-              : "text-slate-600 hover:bg-slate-100"
-          }`}
-        >
-          {r.label}
-        </button>
-      ))}
+    <div className="flex flex-col gap-2">
+      <div className="label hidden lg:block">Role</div>
+      <div className="flex flex-col gap-1">
+        {ROLES.map((r) => (
+          <button
+            key={r.value}
+            onClick={() => setRole(r.value)}
+            title={r.description}
+            className={`rounded-sm px-2 py-1.5 text-left text-xs font-sans font-medium transition ${
+              state.user.role === r.value
+                ? "bg-ink text-paper"
+                : "text-ink/70 hover:bg-concrete/10 hover:text-ink"
+            }`}
+          >
+            <span className="block truncate">{r.label}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

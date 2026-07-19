@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 from typing import Any, List, Optional
@@ -6,6 +7,8 @@ from typing import Any, List, Optional
 import httpx
 
 from .prompts import FOUNDER_RESEARCH_SYSTEM_PROMPT
+
+logger = logging.getLogger(__name__)
 
 UMANS_BASE_URL = "https://api.code.umans.ai/v1/chat/completions"
 
@@ -30,6 +33,13 @@ class UmansClient:
         self.model = model or os.environ.get("UMANS_MODEL", "umans-coder")
         self.timeout = float(timeout or os.environ.get("UMANS_RESEARCH_TIMEOUT", "60"))
 
+        logger.info(
+            "umans_client.configured provider=%s model=%s timeout=%s",
+            self.websearch_provider,
+            self.model,
+            self.timeout,
+        )
+
     def research(self, query: str, channels: List[str]) -> dict[str, Any]:
         """Research a founder using Umans native/exa web search.
 
@@ -46,6 +56,11 @@ class UmansClient:
             "X-Umans-Websearch-Provider": self.websearch_provider,
         }
 
+        logger.info(
+            "umans_client.research.start query=%s channels=%s",
+            query,
+            channels,
+        )
         user_message = (
             f"Research this founder across these channels: {', '.join(channels)}.\n\n"
             f"Query: {query}"
@@ -62,16 +77,25 @@ class UmansClient:
         }
 
         with httpx.Client(timeout=self.timeout) as client:
+            logger.info("umans_client.research.request query=%s model=%s", query, self.model)
             response = client.post(UMANS_BASE_URL, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()
 
-        return self._parse_response(data)
+        parsed = self._parse_response(data)
+        logger.info(
+            "umans_client.research.end query=%s profile_name=%s evidence=%s",
+            query,
+            parsed.get("profile", {}).get("name"),
+            len(parsed.get("evidence", []) or []),
+        )
+        return parsed
 
     def _parse_response(self, data: dict[str, Any]) -> dict[str, Any]:
         try:
             choice = data["choices"][0]
         except (KeyError, IndexError) as exc:
+            logger.error("umans_client.parse.unexpected_response data=%s", data)
             raise ValueError(f"Unexpected Umans response shape: {data}") from exc
 
         message = choice.get("message", {})
@@ -85,11 +109,14 @@ class UmansClient:
             content = content.strip()
 
         if not content:
+            logger.error("umans_client.parse.empty_content")
             raise ValueError("Umans response contained no content")
 
         try:
             parsed = json.loads(content)
         except json.JSONDecodeError as exc:
+            logger.error("umans_client.parse.invalid_json content=%s", content)
             raise ValueError(f"Umans response was not valid JSON:\n{content}") from exc
 
+        logger.info("umans_client.parse.ok")
         return parsed
