@@ -3,16 +3,15 @@ import { useNavigate } from "react-router-dom";
 import { FileText, CheckCircle2, Loader2, AlertCircle, Upload } from "lucide-react";
 import { extractDeck } from "@/agents/deckExtractor";
 import { claimsFromDeck } from "@/agents/claimExtractor";
-import { DemoBadge } from "@/components/DemoBadge";
 import { DeckClaimTable } from "@/components/DeckClaimTable";
 import { api } from "@/api/client";
 import type { DeckExtractionResult } from "@/domain/types";
 import type { ApiError } from "@/types/backend";
 
-const DEMO_DECKS = [
-  { value: "case-contradictory-traction", label: "Demo deck: TractionAI (contradictory traction)" },
-  { value: "case-founder-spike", label: "Demo deck: PromptBridge (strong founder, weak idea)" },
-  { value: "case-cold-start", label: "Demo deck: ML Code Review (cold-start talent)" },
+const SAMPLE_DECKS = [
+  { value: "case-contradictory-traction", label: "Sample deck: TractionAI (contradictory traction)" },
+  { value: "case-founder-spike", label: "Sample deck: PromptBridge (strong founder, weak idea)" },
+  { value: "case-cold-start", label: "Sample deck: ML Code Review (cold-start talent)" },
 ];
 
 const SECTIONS = [
@@ -27,7 +26,7 @@ export default function Apply() {
   const [company, setCompany] = useState("");
   const [founder, setFounder] = useState("");
   const [email, setEmail] = useState("");
-  const [deckName, setDeckName] = useState(DEMO_DECKS[0].value);
+  const [deckName, setDeckName] = useState(SAMPLE_DECKS[0].value);
   const [productUrl, setProductUrl] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [consent, setConsent] = useState(false);
@@ -40,7 +39,7 @@ export default function Apply() {
     setLoading(true);
     setError(null);
     try {
-      const result = await extractDeck(deckName, "Demo deck content");
+      const result = await extractDeck(deckName, "Sample deck content");
       setExtraction(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Extraction failed");
@@ -81,7 +80,6 @@ export default function Apply() {
           <h1 className="text-2xl font-bold text-ink">Drop a deck on the desk</h1>
           <p className="text-sm text-concrete">Upload a deck and answer follow-up questions. Every answer becomes a claim.</p>
         </div>
-        <DemoBadge />
       </div>
 
       <form onSubmit={handleSubmit} className="panel space-y-5">
@@ -127,13 +125,13 @@ export default function Apply() {
 
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
           <div>
-            <label className="label mb-1.5 block">Deck (demo fixtures for local preview)</label>
+            <label className="label mb-1.5 block">Deck (sample fixtures for local preview)</label>
             <select
               className="w-full rounded-sm border border-concrete/30 bg-paper px-3 py-2 text-sm font-sans outline-none"
               value={deckName}
               onChange={(e) => setDeckName(e.target.value)}
             >
-              {DEMO_DECKS.map((d) => (
+              {SAMPLE_DECKS.map((d) => (
                 <option key={d.value} value={d.value}>
                   {d.label}
                 </option>
@@ -175,7 +173,7 @@ export default function Apply() {
             className="flex items-center gap-2 rounded-sm border border-concrete/30 bg-paper px-4 py-2.5 text-sm font-sans font-medium text-ink hover:bg-manila/40 disabled:opacity-50"
           >
             {loading ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
-            {loading ? "Extracting…" : "Preview demo deck"}
+            {loading ? "Extracting…" : "Preview sample deck"}
           </button>
           <button
             type="submit"
@@ -190,7 +188,7 @@ export default function Apply() {
         {extraction && (
           <div className="rounded-sm border border-concrete/20 bg-manila/30 p-4 text-sm text-ink/80">
             <div className="flex items-center gap-2 font-semibold text-ink">
-              <FileText size={16} /> Demo extraction result
+              <FileText size={16} /> Sample extraction result
             </div>
             <div className="mt-2 grid grid-cols-3 gap-3 text-xs">
               <div className="rounded-sm border border-concrete/20 bg-paper p-2">
@@ -218,7 +216,7 @@ export default function Apply() {
 
       {extraction && (
         <div className="panel space-y-4">
-          <h3 className="font-display text-lg font-semibold text-ink">Demo deck claims</h3>
+          <h3 className="font-display text-lg font-semibold text-ink">Sample deck claims</h3>
           <DeckClaimTable claims={deckClaims} />
           <div className="text-xs text-concrete">
             Projections and assumptions are shown as distinct from verified facts. Click a claim to see its slide citation.

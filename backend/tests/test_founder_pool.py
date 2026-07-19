@@ -87,8 +87,9 @@ def test_approve_pool_item_creates_founder(mock_agent_cls, client):
     response = client.post(f"/v1/founders/pool/{item_id}/approve")
     assert response.status_code == 200
     data = response.json()
-    assert data["name"] == "Bob Builder"
-    assert data["linkedin_url"] == "https://linkedin.com/in/bob"
+    assert data["founder"]["name"] == "Bob Builder"
+    assert data["founder"]["linkedin_url"] == "https://linkedin.com/in/bob"
+    assert data["opportunity_id"]
 
     updated = load_founder_pool()
     assert updated[0].status == PoolItemStatus.APPROVED

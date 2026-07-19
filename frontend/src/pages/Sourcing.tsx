@@ -11,7 +11,6 @@ import {
   Database,
 } from "lucide-react";
 import { api } from "@/api/client";
-import { DemoBadge } from "@/components/DemoBadge";
 import type {
   BackendPoolItem,
   BackendSourcingSchedule,
@@ -203,14 +202,13 @@ export default function Sourcing() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <DemoBadge />
           <button
             onClick={handleSeed}
             disabled={actionId === "seed"}
             className="flex items-center gap-2 rounded-sm border border-concrete/30 bg-paper px-3 py-2 text-sm font-sans font-medium text-ink hover:bg-manila/40 disabled:opacity-50"
           >
             {actionId === "seed" ? <Loader2 size={16} className="animate-spin" /> : <Database size={16} />}
-            Seed demo
+            Seed
           </button>
           <button
             onClick={handleSeedAll}
@@ -218,7 +216,7 @@ export default function Sourcing() {
             className="flex items-center gap-2 rounded-sm border border-verified/30 bg-verified/10 px-3 py-2 text-sm font-sans font-medium text-verified hover:bg-verified/20 disabled:opacity-50"
           >
             {actionId === "seed-all" ? <Loader2 size={16} className="animate-spin" /> : <Database size={16} />}
-            Seed all AI data
+            Seed all
           </button>
         </div>
       </div>
@@ -293,7 +291,7 @@ export default function Sourcing() {
 
         {schedules.length === 0 && !loading && (
           <div className="text-sm text-concrete">
-            No schedules yet. Seed the demo to create a default schedule, or trigger a run for a thesis.
+            No schedules yet. Seed to create a default schedule, or trigger a run for a thesis.
           </div>
         )}
 

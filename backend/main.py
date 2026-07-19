@@ -40,6 +40,7 @@ from models import (
     SourcingSchedule,
     SourcingJob,
     SourceConfig,
+    ApprovedPoolItemResponse,
 )
 from scoring import calculate_founder_score
 from research import OpenAIClient, create_founder_from_research, evidence_from_llm
@@ -266,9 +267,9 @@ def refresh_founder_pool_endpoint(thesis_id: Optional[str] = None, db: Session =
     return {"task_id": task.id, "status": "queued"}
 
 
-@app.post("/v1/founders/pool/{item_id}/approve", response_model=Founder)
+@app.post("/v1/founders/pool/{item_id}/approve", response_model=ApprovedPoolItemResponse)
 def approve_pool_item(item_id: str, db: Session = Depends(get_db)):
-    """Approve a pool recommendation and create a Founder record."""
+    """Approve a pool recommendation and create a Founder record + Opportunity."""
     logger.info("endpoint.approve_pool_item.start item_id=%s", item_id)
     db_item = crud.get_pool_item(db, item_id)
     if not db_item:
@@ -296,6 +297,29 @@ def approve_pool_item(item_id: str, db: Session = Depends(get_db)):
     )
     crud.create_founder(db, founder)
 
+    # Initial cold-start score snapshot (score near neutral, low confidence, all unknowns).
+    db_founder = crud.get_founder(db, founder.id)
+    snapshot = calculate_founder_score(founder.id, [])
+    db_snapshot = crud.create_score_snapshot(db, snapshot)
+    crud.update_founder(db, founder.id, {"latest_score_snapshot_id": db_snapshot.id})
+
+    # Create opportunity so the approved founder has a case to evaluate.
+    opportunity_id = f"opp_{uuid.uuid4().hex[:8]}"
+    opp = OpportunityScreen(
+        opportunity_id=opportunity_id,
+        founder_id=founder.id,
+        founder_score=snapshot.founder_score,
+        founder_confidence=snapshot.overall_confidence,
+        founder_market_fit=FounderMarketFit(score=None, confidence=0.0, coverage=0.0),
+        team_completeness=TeamCompleteness(score=None, confidence=0.0, coverage=0.0),
+        market_posture="neutral",
+        market_confidence=0.0,
+        idea_vs_market_posture="neutral",
+        idea_vs_market_confidence=0.0,
+        next_founder_action="Run structured cold-start assessment.",
+    )
+    crud.create_or_update_opportunity(db, opp)
+
     # Auto-trigger social background research.
     background_id = f"soc_{uuid.uuid4().hex[:8]}"
     crud.update_founder(db, founder_id, {"social_background_id": background_id})
@@ -318,12 +342,14 @@ def approve_pool_item(item_id: str, db: Session = Depends(get_db)):
 
     crud.update_pool_item_status(db, item_id, PoolItemStatus.APPROVED.value)
     logger.info(
-        "endpoint.approve_pool_item.end item_id=%s founder_id=%s background_id=%s",
+        "endpoint.approve_pool_item.end item_id=%s founder_id=%s opportunity_id=%s background_id=%s",
         item_id,
         founder_id,
+        opportunity_id,
         background_id,
     )
-    return crud.founder_to_pydantic(db, crud.get_founder(db, founder_id))
+    approved_founder = crud.founder_to_pydantic(db, crud.get_founder(db, founder_id))
+    return ApprovedPoolItemResponse(founder=approved_founder, opportunity_id=opportunity_id)
 
 
 @app.post("/v1/founders/pool/{item_id}/dismiss")
@@ -869,52 +895,13 @@ def seed_demo(db: Session = Depends(get_db)):
     )
     crud.create_sourcing_schedule(db, default_schedule)
 
-    # Create cold-start founder
-    founder = create_founder(
-        CreateFounderRequest(
-            name="Maya Shah",
-            email="maya@contextloop.example",
-            current_company="ContextLoop",
-            role="Founder",
-            location="Bangalore",
-        ),
-        db,
-    )
-
-    # No evidence => score near neutral with low confidence and clear unknowns.
-    db_founder = crud.get_founder(db, founder.id)
-    snapshot = calculate_founder_score(founder.id, [])
-    db_snapshot = crud.create_score_snapshot(db, snapshot)
-    crud.update_founder(db, founder.id, {"latest_score_snapshot_id": db_snapshot.id})
-
-    # Create opportunity
-    opp_id = f"opp_{uuid.uuid4().hex[:8]}"
-    opp = OpportunityScreen(
-        opportunity_id=opp_id,
-        founder_id=founder.id,
-        founder_score=snapshot.founder_score,
-        founder_confidence=snapshot.overall_confidence,
-        founder_market_fit=FounderMarketFit(score=None, confidence=0.0, coverage=0.0),
-        team_completeness=TeamCompleteness(score=None, confidence=0.0, coverage=0.0),
-        market_posture="neutral",
-        market_confidence=0.0,
-        idea_vs_market_posture="neutral",
-        idea_vs_market_confidence=0.0,
-        next_founder_action="Run structured cold-start assessment.",
-    )
-    crud.create_or_update_opportunity(db, opp)
-
     logger.info(
-        "endpoint.seed_demo.end thesis_id=%s founder_id=%s opportunity_id=%s",
+        "endpoint.seed_demo.end thesis_id=%s",
         thesis.id,
-        founder.id,
-        opp_id,
     )
     return {
         "thesis_id": thesis.id,
-        "founder_id": founder.id,
-        "opportunity_id": opp_id,
-        "message": "Demo seeded. Founder score is near neutral with low confidence and clear unknowns.",
+        "message": "Thesis and sourcing schedule seeded. No synthetic founder created.",
     }
 
 

@@ -151,6 +151,11 @@ export type BackendPoolItem = {
   created_at: string;
 };
 
+export type ApprovedPoolItemResponse = {
+  founder: BackendFounder;
+  opportunity_id: string;
+};
+
 export type SourceConfig = {
   platform: string;
   keywords: string;

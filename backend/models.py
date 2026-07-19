@@ -319,6 +319,11 @@ class Founder(BaseModel):
     latest_score_snapshot: Optional[ScoreSnapshot] = None
 
 
+class ApprovedPoolItemResponse(BaseModel):
+    founder: Founder
+    opportunity_id: str
+
+
 class Decision(str, Enum):
     ADVANCE = "advance"
     DILIGENCE = "diligence"

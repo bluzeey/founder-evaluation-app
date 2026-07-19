@@ -105,11 +105,21 @@ def research_social_background(
         )
         background.id = pending_id
 
-        # Optionally compute a score snapshot from the social evidence.
+        # Optionally compute a score snapshot from the social evidence and update
+        # the founder + opportunity so the case reflects the new evidence.
         if auto_score and background.evidence_items:
-            background.score_snapshot = calculate_founder_score(
-                founder_id, background.evidence_items
-            )
+            score_snapshot = calculate_founder_score(founder_id, background.evidence_items)
+            db_snapshot = crud.create_score_snapshot(db, score_snapshot)
+            crud.update_founder(db, founder_id, {"latest_score_snapshot_id": db_snapshot.id})
+            background.score_snapshot = score_snapshot
+
+            # Update any existing opportunity with the new score.
+            opps = crud.list_opportunities(db, founder_id=founder_id)
+            if opps:
+                for db_opp in opps:
+                    db_opp.founder_score = score_snapshot.founder_score
+                    db_opp.founder_confidence = score_snapshot.overall_confidence
+                db.commit()
 
         crud.update_social_background(db, background)
         logger.info(

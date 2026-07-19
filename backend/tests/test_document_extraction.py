@@ -43,8 +43,9 @@ def _create_founder_and_opportunity(client):
     assert r.status_code == 200
     founder_id = r.json()["id"]
 
-    r = client.post("/v1/seed")
-    opp_id = r.json()["opportunity_id"]
+    opp_id = f"opp_{__import__('uuid').uuid4().hex[:8]}"
+    r = client.post(f"/v1/opportunities/{opp_id}/screen?founder_id={founder_id}")
+    assert r.status_code == 200
     return founder_id, opp_id
 
 
@@ -85,9 +86,7 @@ def test_upload_deck_extracts_claims_and_evidence(mock_agent_cls, client):
         ],
     }
 
-    r = client.post("/v1/seed")
-    opp_id = r.json()["opportunity_id"]
-    founder_id = r.json()["founder_id"]
+    founder_id, opp_id = _create_founder_and_opportunity(client)
 
     response = client.post(
         f"/v1/opportunities/{opp_id}/deck?founder_id={founder_id}",
@@ -112,8 +111,7 @@ def test_upload_deck_extracts_claims_and_evidence(mock_agent_cls, client):
 
 
 def test_upload_deck_rejects_unknown_file_type(client):
-    r = client.post("/v1/seed")
-    opp_id = r.json()["opportunity_id"]
+    _, opp_id = _create_founder_and_opportunity(client)
 
     response = client.post(
         f"/v1/opportunities/{opp_id}/deck",

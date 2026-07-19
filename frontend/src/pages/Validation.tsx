@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
 import { computeValidationSummary, ValidationSummary } from "@/engine/validationSummary";
-import { DemoBadge } from "@/components/DemoBadge";
 
 export default function Validation() {
   const [summary, setSummary] = useState<ValidationSummary | null>(null);
@@ -17,9 +16,8 @@ export default function Validation() {
         <div>
           <div className="label mb-1">Validation summary</div>
           <h1 className="text-2xl font-bold text-ink">System audit</h1>
-          <p className="text-sm text-concrete">Deterministic checks over the demo data set.</p>
+          <p className="text-sm text-concrete">Deterministic checks over engine output.</p>
         </div>
-        <DemoBadge />
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

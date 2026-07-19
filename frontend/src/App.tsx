@@ -72,9 +72,7 @@ function App() {
             <div className="text-xs font-mono uppercase tracking-widest text-concrete">
               {NAV.find((n) => location.pathname.startsWith(n.path))?.label || "Workspace"}
             </div>
-            <div className="text-xs text-concrete">
-              Demo + live backend data
-            </div>
+            <div className="text-xs text-concrete">Live backend data</div>
           </header>
 
           <main className="flex-1 p-6 lg:p-8">

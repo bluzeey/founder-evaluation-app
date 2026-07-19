@@ -15,6 +15,7 @@ import type {
   UploadDeckResponse,
   QueuedResponse,
   ApiError,
+  ApprovedPoolItemResponse,
 } from "@/types/backend";
 
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) || "/api";
@@ -101,7 +102,7 @@ export const api = {
   pool: {
     list: (status?: string) =>
       get<BackendPoolItem[]>(`/v1/founders/pool${status ? `?status=${status}` : ""}`),
-    approve: (id: string) => post<BackendFounder>(`/v1/founders/pool/${id}/approve`),
+    approve: (id: string) => post<ApprovedPoolItemResponse>(`/v1/founders/pool/${id}/approve`),
     dismiss: (id: string) => post<BackendPoolItem>(`/v1/founders/pool/${id}/dismiss`),
     refresh: (thesisId?: string) =>
       post<QueuedResponse>(`/v1/founders/pool/refresh${thesisId ? `?thesis_id=${thesisId}` : ""}`),

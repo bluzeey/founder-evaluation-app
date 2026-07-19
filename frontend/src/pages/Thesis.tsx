@@ -1,6 +1,4 @@
-import { DEFAULT_THESIS, THESIS_DESCRIPTION, isWithinThesis, parseThesisQuery, DEFAULT_CHECK_SIZE, DEFAULT_OWNERSHIP_TARGET } from "@/config/thesis";
-import { DEMO_CASES, getDemoCompany } from "@/data/demoCases";
-import { DemoBadge } from "@/components/DemoBadge";
+import { DEFAULT_THESIS, THESIS_DESCRIPTION, parseThesisQuery, DEFAULT_CHECK_SIZE, DEFAULT_OWNERSHIP_TARGET } from "@/config/thesis";
 import { useEffect, useState } from "react";
 import { api } from "@/api/client";
 import { Loader2 } from "lucide-react";
@@ -33,14 +31,6 @@ export default function Thesis() {
   }, []);
 
   const activeThesis: ThesisConfig = backendTheses.length > 0 ? mapBackendThesis(backendTheses[0]) : DEFAULT_THESIS;
-  const checkSize = activeThesis.checkSize;
-
-  const results = DEMO_CASES.map((c) => {
-    const company = c.companyId ? getDemoCompany(c.companyId) : undefined;
-    if (!company) return null;
-    const match = isWithinThesis(company.sector, company.stage, company.geography, activeThesis);
-    return { caseId: c.id, company, match, checkSize };
-  }).filter(Boolean);
 
   return (
     <div className="space-y-6">
@@ -50,10 +40,7 @@ export default function Thesis() {
           <h1 className="text-2xl font-bold text-ink">Investment mandate</h1>
           <p className="text-sm text-concrete">Sector, stage, geography, check size, ownership, and exclusions.</p>
         </div>
-        <div className="flex items-center gap-2">
-          <DemoBadge />
-          {loading && <Loader2 size={16} className="animate-spin text-concrete" />}
-        </div>
+        <div>{loading && <Loader2 size={16} className="animate-spin text-concrete" />}</div>
       </div>
 
       {backendTheses.length > 0 && (
@@ -110,37 +97,6 @@ export default function Thesis() {
           <div className="text-xs text-concrete">
             This is keyword-based parsing with transparent filters, not model reasoning presented as inference.
           </div>
-        </div>
-      </div>
-
-      <div className="panel space-y-4">
-        <h3 className="font-display text-lg font-semibold text-ink">Query results</h3>
-        <div className="space-y-3">
-          {results.map((r) =>
-            r ? (
-              <div
-                key={r.caseId}
-                className={`flex items-center justify-between rounded-sm border p-3 ${
-                  r.match.eligible ? "border-verified/30 bg-verified/10" : "border-concrete/20 bg-paper"
-                }`}
-              >
-                <div>
-                  <div className="font-sans font-semibold text-ink">
-                    {r.company.name} · {r.company.sector} · {r.company.stage} · {r.company.geography}
-                  </div>
-                  <div className="text-xs text-concrete">
-                    Matches: {r.match.matches.join(", ") || "none"} · Mismatches: {r.match.mismatches.join(", ") || "none"}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className={`text-sm font-semibold ${r.match.eligible ? "text-verified" : "text-concrete"}`}>
-                    {r.match.eligible ? "Eligible" : "Ineligible"}
-                  </div>
-                  <div className="text-xs text-concrete">Check ${r.checkSize.toLocaleString()}</div>
-                </div>
-              </div>
-            ) : null
-          )}
         </div>
       </div>
     </div>
