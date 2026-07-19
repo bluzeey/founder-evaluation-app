@@ -91,6 +91,17 @@ class CreateThesisRequest(BaseModel):
     min_evidence_requirements: Optional[Dict[str, Any]] = None
 
 
+class UpdateThesisRequest(BaseModel):
+    name: Optional[str] = None
+    sectors: Optional[List[str]] = None
+    stages: Optional[List[str]] = None
+    geographies: Optional[List[str]] = None
+    check_size_min: Optional[float] = None
+    check_size_max: Optional[float] = None
+    risk_appetite: Optional[str] = None
+    min_evidence_requirements: Optional[Dict[str, Any]] = None
+
+
 class AddEvidenceRequest(BaseModel):
     items: List[EvidenceItem]
 
@@ -548,6 +559,34 @@ def list_theses(db: Session = Depends(get_db)):
     db_theses = crud.list_theses(db)
     logger.info("endpoint.list_theses count=%s", len(db_theses))
     return [crud.thesis_to_pydantic(t) for t in db_theses]
+
+
+@app.get("/v1/theses/{thesis_id}", response_model=Thesis)
+def get_thesis(thesis_id: str, db: Session = Depends(get_db)):
+    db_thesis = crud.get_thesis(db, thesis_id)
+    if not db_thesis:
+        logger.warning("endpoint.get_thesis.not_found thesis_id=%s", thesis_id)
+        raise HTTPException(status_code=404, detail="Thesis not found")
+    logger.info("endpoint.get_thesis.ok thesis_id=%s", thesis_id)
+    return crud.thesis_to_pydantic(db_thesis)
+
+
+@app.put("/v1/theses/{thesis_id}", response_model=Thesis)
+def update_thesis(
+    thesis_id: str, req: UpdateThesisRequest, db: Session = Depends(get_db)
+):
+    db_thesis = crud.get_thesis(db, thesis_id)
+    if not db_thesis:
+        logger.warning("endpoint.update_thesis.not_found thesis_id=%s", thesis_id)
+        raise HTTPException(status_code=404, detail="Thesis not found")
+
+    updates = req.model_dump(exclude_unset=True)
+    if not updates:
+        return crud.thesis_to_pydantic(db_thesis)
+
+    db_thesis = crud.update_thesis(db, thesis_id, updates)
+    logger.info("endpoint.update_thesis.ok thesis_id=%s updates=%s", thesis_id, list(updates.keys()))
+    return crud.thesis_to_pydantic(db_thesis)
 
 
 @app.get("/v1/founders", response_model=List[Founder])

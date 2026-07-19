@@ -8,6 +8,7 @@ from database import SessionLocal
 import crud
 from document_extractor import extract_text
 from models import Claim, EvidenceItem, Founder, SourcingJob, TrustStatus
+from estimation import estimate_founder_scores
 from research import DocumentAgent
 from research.extractor import create_founder_from_research, evidence_from_llm
 from tasks.retry_utils import (
@@ -113,6 +114,16 @@ def extract_document(
             snapshot = calculate_founder_score(founder_id, all_items, previous)
             db_snapshot = crud.create_score_snapshot(db, snapshot)
             crud.update_founder(db, founder_id, {"latest_score_snapshot_id": db_snapshot.id})
+
+            # Keep opportunity scores in sync with the new evidence.
+            opps = crud.list_opportunities(db, founder_id)
+            for db_opp in opps:
+                db_opp.founder_score = snapshot.founder_score
+                db_opp.founder_confidence = snapshot.overall_confidence
+            db.commit()
+
+            # Fill remaining unknown/low-confidence dimensions with AI estimates.
+            estimate_founder_scores(founder_id, db=db)
 
         # Optionally update founder profile if founder_id is provided.
         if founder_id:

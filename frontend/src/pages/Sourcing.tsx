@@ -11,6 +11,7 @@ import {
   Database,
 } from "lucide-react";
 import { api } from "@/api/client";
+import { useApp } from "@/store/appContext";
 import type {
   BackendPoolItem,
   BackendSourcingSchedule,
@@ -21,6 +22,7 @@ import type {
 } from "@/types/backend";
 
 export default function Sourcing() {
+  const { activeThesis } = useApp();
   const [status, setStatus] = useState<BackendSourcingStatus | null>(null);
   const [schedules, setSchedules] = useState<BackendSourcingSchedule[]>([]);
   const [pool, setPool] = useState<BackendPoolItem[]>([]);
@@ -254,7 +256,7 @@ export default function Sourcing() {
         <div className="flex items-center justify-between">
           <h3 className="font-display text-lg font-semibold text-ink">Sourcing schedules</h3>
           <button
-            onClick={() => handleRefreshPool(theses[0]?.id)}
+            onClick={() => handleRefreshPool(activeThesis?.id ?? theses[0]?.id)}
             disabled={actionId?.startsWith("refresh-") || theses.length === 0}
             className="flex items-center gap-2 rounded-sm border border-concrete/30 bg-paper px-3 py-1.5 text-sm font-sans font-medium text-ink hover:bg-manila/40 disabled:opacity-50"
           >

@@ -125,6 +125,17 @@ def list_theses(db: Session) -> List[db_models.Thesis]:
     return db.query(db_models.Thesis).order_by(db_models.Thesis.created_at.desc()).all()
 
 
+def update_thesis(db: Session, thesis_id: str, updates: Dict) -> Optional[db_models.Thesis]:
+    db_thesis = get_thesis(db, thesis_id)
+    if not db_thesis:
+        return None
+    for key, value in updates.items():
+        setattr(db_thesis, key, value)
+    db.commit()
+    db.refresh(db_thesis)
+    return db_thesis
+
+
 def thesis_to_pydantic(db_thesis: db_models.Thesis) -> Thesis:
     return Thesis(
         id=db_thesis.id,
@@ -570,6 +581,15 @@ def list_claims_for_opportunity(db: Session, opportunity_id: str) -> List[Claim]
     db_claims = (
         db.query(db_models.Claim)
         .filter(db_models.Claim.opportunity_id == opportunity_id)
+        .all()
+    )
+    return [claim_to_pydantic(c) for c in db_claims]
+
+
+def list_claims_for_founder(db: Session, founder_id: str) -> List[Claim]:
+    db_claims = (
+        db.query(db_models.Claim)
+        .filter(db_models.Claim.founder_id == founder_id)
         .all()
     )
     return [claim_to_pydantic(c) for c in db_claims]

@@ -11,6 +11,8 @@ import type {
   BackendScoreSnapshot,
   CreateSourcingScheduleRequest,
   UpdateSourcingScheduleRequest,
+  CreateThesisRequest,
+  UpdateThesisRequest,
   CreateFounderRequest,
   UploadDeckResponse,
   QueuedResponse,
@@ -90,6 +92,10 @@ export const api = {
 
   theses: {
     list: () => get<BackendThesis[]>("/v1/theses"),
+    get: (id: string) => get<BackendThesis>(`/v1/theses/${id}`),
+    create: (req: CreateThesisRequest) => post<BackendThesis>("/v1/theses", req),
+    update: (id: string, req: UpdateThesisRequest) =>
+      put<BackendThesis>(`/v1/theses/${id}`, req),
   },
 
   founders: {

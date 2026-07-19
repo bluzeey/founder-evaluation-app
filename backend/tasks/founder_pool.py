@@ -22,6 +22,7 @@ from models import (
 )
 from research import SourcingAgent
 from scoring import calculate_founder_score
+from estimation import estimate_founder_scores
 from tasks.retry_utils import SOURCING_MAX_RETRIES, SOURCING_RETRY_BASE_DELAY, maybe_retry
 from tasks.social_research import research_social_background, store_social_background
 
@@ -344,9 +345,12 @@ def refresh_founder_pool(
             # Every sourced lead becomes a founder case with a cold-start score.
             # Social background research is queued automatically when links exist.
             for item in new_items:
-                create_founder_and_opportunity_from_pool_item(db, item)
+                founder, _ = create_founder_and_opportunity_from_pool_item(db, item)
+                # Estimate dimension scores from the source signal and any available context.
+                estimate_founder_scores(founder.id, db=db)
 
-        db.commit()
+            db.commit()
+
         final_pool = crud.list_pool_items(db)
 
         # Update job if provided.

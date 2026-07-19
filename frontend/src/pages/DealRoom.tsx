@@ -106,7 +106,23 @@ function SocialLink({ href, icon: Icon, label }: { href: string; icon: typeof Li
   );
 }
 
-function DimensionCard({ breakdown }: { breakdown: BackendDimensionBreakdown }) {
+function isEstimateOnly(
+  breakdown: BackendDimensionBreakdown,
+  snapshot: BackendScoreSnapshot | null
+) {
+  if (!snapshot) return false;
+  const items = snapshot.evidence_items.filter((item) => item.dimension === breakdown.dimension);
+  if (items.length === 0) return false;
+  return items.every((item) => item.evidence_type === "inferred_estimate");
+}
+
+function DimensionCard({
+  breakdown,
+  snapshot,
+}: {
+  breakdown: BackendDimensionBreakdown;
+  snapshot: BackendScoreSnapshot | null;
+}) {
   const name = breakdown.dimension
     .replace(/_/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -114,11 +130,18 @@ function DimensionCard({ breakdown }: { breakdown: BackendDimensionBreakdown }) 
     <div className="rounded-sm border border-concrete/20 bg-paper p-3 space-y-2">
       <div className="flex items-center justify-between gap-2">
         <div className="label">{name}</div>
-        {breakdown.unknown && (
-          <span className="rounded-sm bg-concrete/10 px-1.5 py-0.5 text-[10px] font-medium uppercase text-concrete">
-            Unknown
-          </span>
-        )}
+        <div className="flex items-center gap-1">
+          {breakdown.unknown && (
+            <span className="rounded-sm bg-concrete/10 px-1.5 py-0.5 text-[10px] font-medium uppercase text-concrete">
+              Unknown
+            </span>
+          )}
+          {!breakdown.unknown && isEstimateOnly(breakdown, snapshot) && (
+            <span className="rounded-sm bg-action/10 px-1.5 py-0.5 text-[10px] font-medium uppercase text-action">
+              AI estimate
+            </span>
+          )}
+        </div>
       </div>
       <div className="font-display text-xl font-bold tabular text-ink">
         {breakdown.unknown ? "—" : `${Math.round(breakdown.adjusted_score)} / 100`}
@@ -255,7 +278,7 @@ function LiveOpportunityView({
         {snapshot ? (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {snapshot.dimension_breakdowns.map((bd) => (
-              <DimensionCard key={bd.dimension} breakdown={bd} />
+              <DimensionCard key={bd.dimension} breakdown={bd} snapshot={snapshot} />
             ))}
           </div>
         ) : (

@@ -221,6 +221,28 @@ export type UpdateSourcingScheduleRequest = {
   sources?: SourceConfig[];
 };
 
+export type CreateThesisRequest = {
+  name: string;
+  sectors?: string[];
+  stages?: string[];
+  geographies?: string[];
+  check_size_min?: number;
+  check_size_max?: number;
+  risk_appetite?: string;
+  min_evidence_requirements?: Record<string, unknown>;
+};
+
+export type UpdateThesisRequest = {
+  name?: string;
+  sectors?: string[];
+  stages?: string[];
+  geographies?: string[];
+  check_size_min?: number;
+  check_size_max?: number;
+  risk_appetite?: string;
+  min_evidence_requirements?: Record<string, unknown>;
+};
+
 export type CreateFounderRequest = {
   name: string;
   email: string;

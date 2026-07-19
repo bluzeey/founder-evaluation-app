@@ -14,6 +14,7 @@ class EvidenceType(str, Enum):
     SELF_REPORTED = "self_reported"
     UNVERIFIED_PROXY = "unverified_proxy"
     PRESTIGE_PROXY = "prestige_proxy"
+    INFERRED_ESTIMATE = "inferred_estimate"
 
 
 class EvidenceStatus(str, Enum):
@@ -54,6 +55,7 @@ EVIDENCE_TYPE_STRENGTH = {
     EvidenceType.STRUCTURED_SIMULATION: 0.60,
     EvidenceType.STRUCTURED_INTERVIEW: 0.45,
     EvidenceType.SELF_REPORTED: 0.25,
+    EvidenceType.INFERRED_ESTIMATE: 0.25,
     EvidenceType.UNVERIFIED_PROXY: 0.0,
     EvidenceType.PRESTIGE_PROXY: 0.0,
 }

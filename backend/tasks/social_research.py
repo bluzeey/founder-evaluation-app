@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 from celery_app import app
 from database import SessionLocal
 import crud
+from estimation import estimate_founder_scores
 from models import SocialMediaBackground
 from research import SocialAgent, create_social_background
 from scoring import calculate_founder_score
@@ -120,6 +121,9 @@ def research_social_background(
                     db_opp.founder_score = score_snapshot.founder_score
                     db_opp.founder_confidence = score_snapshot.overall_confidence
                 db.commit()
+
+            # Fill any remaining unknown/low-confidence dimensions with AI estimates.
+            estimate_founder_scores(founder_id, db=db)
 
         crud.update_social_background(db, background)
         logger.info(

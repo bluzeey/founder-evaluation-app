@@ -87,9 +87,10 @@ def calculate_dimension(dimension: Dimension, items: List[EvidenceItem]) -> Dime
     confidence = coverage * (0.70 + 0.30 * source_diversity) * contradiction_factor
 
     # Hard rules from PRD
-    # AI chat alone cannot create confidence above 0.60
+    # AI chat / estimates alone cannot create confidence above 0.60
     chat_only = all(
-        item.evidence_type.value in ("structured_simulation", "structured_interview", "self_reported")
+        item.evidence_type.value
+        in ("structured_simulation", "structured_interview", "self_reported", "inferred_estimate")
         for item in items
     )
     if chat_only:
