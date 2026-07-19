@@ -62,7 +62,7 @@ export default function Cases() {
         <div className="grid grid-cols-1 gap-4">
           {opportunities.map((opp) => {
             const founder = founders[opp.founder_id];
-            const status = state.caseOverrides[opp.opportunity_id]?.status || "SCREENING";
+            const status = (opp.status as any) || "SCREENING";
             return (
               <Link
                 key={opp.opportunity_id}

@@ -118,6 +118,7 @@ export type BackendOpportunity = {
   idea_vs_market_posture: string;
   idea_vs_market_confidence: number;
   next_founder_action?: string;
+  status: string;
 };
 
 export type BackendClaim = {

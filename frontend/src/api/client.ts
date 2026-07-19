@@ -66,6 +66,15 @@ async function put<T>(path: string, body: unknown): Promise<T> {
   return handleResponse<T>(response);
 }
 
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return handleResponse<T>(response);
+}
+
 async function del<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, { method: "DELETE" });
   return handleResponse<T>(response);
@@ -116,12 +125,15 @@ export const api = {
   },
 
   opportunities: {
-    list: () => get<BackendOpportunity[]>("/v1/opportunities"),
+    list: (status?: string) =>
+      get<BackendOpportunity[]>(`/v1/opportunities${status ? `?status=${encodeURIComponent(status)}` : ""}`),
     get: (id: string) => get<BackendOpportunity>(`/v1/opportunities/${id}`),
     screen: (id: string, founderId?: string) =>
       post<BackendOpportunity>(
         `/v1/opportunities/${id}/screen${founderId ? `?founder_id=${encodeURIComponent(founderId)}` : ""}`
       ),
+    updateStatus: (id: string, status: string) =>
+      patch<BackendOpportunity>(`/v1/opportunities/${id}/status`, { status }),
     diligence: (id: string) => get<BackendClaim[]>(`/v1/opportunities/${id}/diligence`),
     uploadDeck: (id: string, file: File, founderId?: string) => {
       const formData = new FormData();

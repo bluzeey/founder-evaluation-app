@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { AlertTriangle, ArrowLeft, Github, Linkedin, Loader2, Upload } from "lucide-react";
 import { CaseStatusBadge } from "@/components/StatusBadge";
+import { CaseStatusActions } from "@/components/CaseStatusActions";
 import { api } from "@/api/client";
 import type {
   BackendOpportunity,
@@ -11,6 +12,7 @@ import type {
   BackendDimensionBreakdown,
   ApiError,
 } from "@/types/backend";
+import type { CaseStatus } from "@/domain/types";
 
 export default function DealRoom() {
   const { caseId } = useParams<{ caseId: string }>();
@@ -142,6 +144,7 @@ export default function DealRoom() {
       uploading={uploading}
       setUploading={setUploading}
       estimating={estimating}
+      onStatusUpdated={(opp) => setOpportunity(opp)}
     />
   );
 }
@@ -221,6 +224,7 @@ function LiveOpportunityView({
   uploading,
   setUploading,
   estimating,
+  onStatusUpdated,
 }: {
   opportunity: BackendOpportunity;
   founder: BackendFounder | null;
@@ -229,6 +233,7 @@ function LiveOpportunityView({
   uploading: boolean;
   setUploading: (v: boolean) => void;
   estimating: boolean;
+  onStatusUpdated?: (opp: BackendOpportunity) => void;
 }) {
   const [uploadError, setUploadError] = useState<string | null>(null);
 
@@ -279,7 +284,7 @@ function LiveOpportunityView({
               )}
             </div>
           </div>
-          <CaseStatusBadge status="SCREENING" />
+          <CaseStatusBadge status={(opportunity.status as CaseStatus) || "SCREENING"} />
         </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -309,6 +314,18 @@ function LiveOpportunityView({
           <span className="font-semibold text-ink">Next action:</span>{" "}
           {opportunity.next_founder_action || "Review opportunity details"}
         </div>
+      </div>
+
+      <div className="panel space-y-4">
+        <h3 className="font-display text-lg font-semibold text-ink">Pipeline actions</h3>
+        <p className="text-sm text-concrete">
+          Move this case into the decision queue or update its status as calls progress.
+        </p>
+        <CaseStatusActions
+          opportunityId={opportunity.opportunity_id}
+          status={(opportunity.status as CaseStatus) || "SCREENING"}
+          onUpdated={onStatusUpdated}
+        />
       </div>
 
       <div className="panel space-y-3">
