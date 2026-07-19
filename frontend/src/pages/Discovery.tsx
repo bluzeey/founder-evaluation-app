@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search, Loader2, ArrowUpRight } from "lucide-react";
 import { api } from "@/api/client";
+import { useAdaptivePolling } from "@/hooks/useAdaptivePolling";
 import type { BackendFounder, BackendOpportunity, BackendDimensionBreakdown } from "@/types/backend";
 
 const DIM_SHORT_LABELS: Record<string, string> = {
@@ -82,22 +83,31 @@ export default function Discovery() {
     }
   };
 
+  const syncData = useCallback(async () => {
+    try {
+      const [founderData, oppData] = await Promise.all([
+        api.founders.list(),
+        api.opportunities.list(),
+      ]);
+      setFounders(founderData);
+      const map: Record<string, BackendOpportunity> = {};
+      oppData.forEach((opp) => {
+        map[opp.founder_id] = opp;
+      });
+      setOpportunities(map);
+    } catch {
+      // ignore polling errors
+    }
+  }, []);
+
   useEffect(() => {
     load();
-    const interval = setInterval(() => {
-      Promise.all([api.founders.list(), api.opportunities.list()])
-        .then(([founderData, oppData]) => {
-          setFounders(founderData);
-          const map: Record<string, BackendOpportunity> = {};
-          oppData.forEach((opp) => {
-            map[opp.founder_id] = opp;
-          });
-          setOpportunities(map);
-        })
-        .catch(() => {});
-    }, 10000);
-    return () => clearInterval(interval);
   }, []);
+
+  const hasActiveOpps = Object.values(opportunities).some(
+    (o) => o.status === "SCREENING" || o.status === "DILIGENCE"
+  );
+  useAdaptivePolling(syncData, hasActiveOpps ? 10000 : 30000);
 
   const rows = useMemo(() => {
     const q = query.toLowerCase();

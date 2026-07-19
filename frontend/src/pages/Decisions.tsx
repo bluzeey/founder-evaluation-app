@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { Loader2, RotateCw, AlertCircle } from "lucide-react";
 import { api } from "@/api/client";
+import { useAdaptivePolling } from "@/hooks/useAdaptivePolling";
 import { CaseStatusBadge } from "@/components/StatusBadge";
 import { CaseStatusActions } from "@/components/CaseStatusActions";
 import type { ApiError, BackendFounder, BackendOpportunity } from "@/types/backend";
@@ -35,13 +36,12 @@ export default function Decisions() {
 
   useEffect(() => {
     refresh();
-    const interval = setInterval(refresh, 10000);
-    return () => clearInterval(interval);
   }, [refresh]);
 
   const queue = opportunities.filter((opp) =>
     DECISION_STATUSES.includes((opp.status as CaseStatus) || "SCREENING")
   );
+  useAdaptivePolling(refresh, queue.length > 0 ? 10000 : 30000);
 
   const handleUpdated = (updated: BackendOpportunity) => {
     setOpportunities((prev) => prev.map((o) => (o.opportunity_id === updated.opportunity_id ? updated : o)));

@@ -3,7 +3,8 @@ import { useParams, Link } from "react-router-dom";
 import { AlertTriangle, ArrowLeft, Github, Linkedin, Loader2, Upload } from "lucide-react";
 import { CaseStatusBadge } from "@/components/StatusBadge";
 import { CaseStatusActions } from "@/components/CaseStatusActions";
-import { api } from "@/api/client";
+import { api, invalidateCache } from "@/api/client";
+import { useAdaptivePolling } from "@/hooks/useAdaptivePolling";
 import type {
   BackendOpportunity,
   BackendFounder,
@@ -27,7 +28,20 @@ export default function DealRoom() {
   const [enriching, setEnriching] = useState(false);
   const [enrichStage, setEnrichStage] = useState<string>("");
   const estimateTriggeredRef = useRef<string | null>(null);
+  const estimateStartedAt = useRef(0);
+  const enrichStartedAt = useRef(0);
 
+  useEffect(() => {
+    if (estimating) estimateStartedAt.current = Date.now();
+  }, [estimating]);
+
+  useEffect(() => {
+    if (enriching) enrichStartedAt.current = Date.now();
+  }, [enriching]);
+
+  // Initial load: fetch the opportunity and diligence claims in parallel
+  // (diligence has no data dependency on the opportunity), then fetch the
+  // founder + score snapshot. Auto-trigger enrichment on cold start.
   useEffect(() => {
     if (!caseId) return;
     let cancelled = false;
@@ -35,9 +49,13 @@ export default function DealRoom() {
     setError(null);
     (async () => {
       try {
-        const opp = await api.opportunities.get(caseId);
+        const [opp, c] = await Promise.all([
+          api.opportunities.get(caseId),
+          api.opportunities.diligence(caseId).catch(() => [] as BackendClaim[]),
+        ]);
         if (cancelled) return;
         setOpportunity(opp);
+        setClaims(c);
         const [f, snap] = await Promise.all([
           api.founders.get(opp.founder_id),
           api.founders.score(opp.founder_id),
@@ -69,106 +87,85 @@ export default function DealRoom() {
       } finally {
         if (!cancelled) setLoading(false);
       }
-      try {
-        const c = await api.opportunities.diligence(caseId);
-        if (!cancelled) setClaims(c);
-      } catch {
-        // ignore diligence errors on initial load
-      }
     })();
-    const interval = setInterval(() => {
-      api.opportunities.diligence(caseId).then(setClaims).catch(() => {});
-    }, 10000);
     return () => {
       cancelled = true;
-      clearInterval(interval);
     };
   }, [caseId]);
 
+  // Diligence poll: refresh claims every 10s while the DealRoom is open.
+  // Pauses when the tab is hidden.
+  useAdaptivePolling(() => {
+    if (!caseId) return;
+    api.opportunities.diligence(caseId).then(setClaims).catch(() => {});
+  }, caseId ? 10000 : 0);
+
   // Poll the founder score while an AI estimate is running. Stops once the
   // confidence rises above 0 (estimate landed) or after ~60s (timeout).
-  useEffect(() => {
+  useAdaptivePolling(async () => {
     if (!estimating || !founder || !caseId) return;
-    let cancelled = false;
-    const startedAt = Date.now();
-    const poll = setInterval(async () => {
-      if (cancelled) return;
-      if (Date.now() - startedAt > 60000) {
+    if (Date.now() - estimateStartedAt.current > 60000) {
+      setEstimating(false);
+      return;
+    }
+    try {
+      const snap = await api.founders.score(founder.id);
+      setSnapshot(snap);
+      if (snap.overall_confidence > 0) {
         setEstimating(false);
-        return;
-      }
-      try {
-        const snap = await api.founders.score(founder.id);
-        if (cancelled) return;
-        setSnapshot(snap);
-        if (snap.overall_confidence > 0) {
-          setEstimating(false);
-          // Refresh the opportunity so the header score/confidence sync.
-          try {
-            const opp = await api.opportunities.get(caseId);
-            if (!cancelled) setOpportunity(opp);
-          } catch {
-            // ignore
-          }
+        // Invalidate the cached opportunity so the header score/confidence
+        // reflect the freshly-landed estimate.
+        invalidateCache(`/v1/opportunities/${caseId}`);
+        try {
+          const opp = await api.opportunities.get(caseId);
+          setOpportunity(opp);
+        } catch {
+          // ignore
         }
-      } catch {
-        // ignore polling errors
       }
-    }, 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(poll);
-    };
-  }, [estimating, founder, caseId]);
+    } catch {
+      // ignore polling errors
+    }
+  }, estimating ? 3000 : 0);
 
   // Poll enrichment runs + score while the 3-stage pipeline is running.
-  // Shows the current stage and stops once confidence crosses the threshold
-  // (0.30) or after ~90s (timeout).
-  useEffect(() => {
+  // Stops once confidence crosses the enrichment threshold (0.30) or after
+  // ~90s (timeout).
+  useAdaptivePolling(async () => {
     if (!enriching || !founder || !caseId) return;
-    let cancelled = false;
-    const startedAt = Date.now();
-    const poll = setInterval(async () => {
-      if (cancelled) return;
-      if (Date.now() - startedAt > 90000) {
+    if (Date.now() - enrichStartedAt.current > 90000) {
+      setEnriching(false);
+      return;
+    }
+    try {
+      const [runs, snap] = await Promise.all([
+        api.enrichment.runs(founder.id),
+        api.founders.score(founder.id),
+      ]);
+      setSnapshot(snap);
+      // Derive the current stage from the most recent running run.
+      const running = runs.find((r) => r.status === "running");
+      if (running) {
+        setEnrichStage(running.stage);
+      } else {
+        const latest = runs[0];
+        if (latest) setEnrichStage(latest.stage);
+      }
+      // Stop once the confidence crosses the enrichment threshold.
+      if (snap.overall_confidence >= 0.3) {
         setEnriching(false);
-        return;
-      }
-      try {
-        const [runs, snap] = await Promise.all([
-          api.enrichment.runs(founder.id),
-          api.founders.score(founder.id),
-        ]);
-        if (cancelled) return;
-        setSnapshot(snap);
-        // Derive the current stage from the most recent running run.
-        const running = runs.find((r) => r.status === "running");
-        if (running) {
-          setEnrichStage(running.stage);
-        } else {
-          // No running stage; pick the latest run's stage for display.
-          const latest = runs[0];
-          if (latest) setEnrichStage(latest.stage);
+        invalidateCache(`/v1/opportunities/${caseId}`);
+        try {
+          const opp = await api.opportunities.get(caseId);
+          setOpportunity(opp);
+        } catch {
+          // ignore
         }
-        // Stop once the confidence crosses the enrichment threshold.
-        if (snap.overall_confidence >= 0.3) {
-          setEnriching(false);
-          try {
-            const opp = await api.opportunities.get(caseId);
-            if (!cancelled) setOpportunity(opp);
-          } catch {
-            // ignore
-          }
-        }
-      } catch {
-        // ignore polling errors
       }
-    }, 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(poll);
-    };
-  }, [enriching, founder, caseId]);
+    } catch {
+      // ignore polling errors
+    }
+  }, enriching ? 3000 : 0);
 
   if (loading && !opportunity) {
     return (

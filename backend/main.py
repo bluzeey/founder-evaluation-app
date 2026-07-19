@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict, Any
@@ -8,6 +9,9 @@ from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import Response as StarletteResponse
 
 from logger_config import configure_logging
 
@@ -70,6 +74,43 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Cache-Control headers for GET endpoints. TTLs mirror the frontend cache
+# config so the browser HTTP cache and the in-memory JS cache agree. This
+# is a defense-in-depth layer: it helps on cold loads (new tab, hard
+# reload) where the JS cache is empty.
+CACHE_TTL_RULES: list[tuple[str, int]] = [
+    (r"^/v1/founders/[^/]+/score$", 2),
+    (r"^/v1/enrichment/runs", 2),
+    (r"^/v1/sourcing/status", 3),
+    (r"^/v1/theses$", 10),
+    (r"^/v1/theses/[^/]+$", 10),
+    (r"^/v1/sourcing/schedules$", 10),
+    (r"^/v1/founders/pool", 5),
+    (r"^/v1/opportunities/[^/]+/diligence", 5),
+    (r"^/v1/founders/[^/]+$", 10),
+    (r"^/v1/opportunities/[^/]+$", 5),
+    (r"^/v1/founders$", 5),
+    (r"^/v1/opportunities$", 5),
+]
+
+
+class CacheHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(
+        self, request: StarletteRequest, call_next
+    ) -> StarletteResponse:
+        response = await call_next(request)
+        if request.method == "GET" and response.status_code == 200:
+            path = request.url.path
+            for pattern, ttl in CACHE_TTL_RULES:
+                if re.match(pattern, path):
+                    response.headers["Cache-Control"] = f"private, max-age={ttl}"
+                    break
+        return response
+
+
+app.add_middleware(CacheHeadersMiddleware)
 
 
 class CreateFounderRequest(BaseModel):

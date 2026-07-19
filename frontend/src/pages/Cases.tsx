@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { CaseStatusBadge } from "@/components/StatusBadge";
 import { useApp } from "@/store/appContext";
 import { api } from "@/api/client";
+import { useAdaptivePolling } from "@/hooks/useAdaptivePolling";
 import type { BackendOpportunity, BackendFounder } from "@/types/backend";
 
 export default function Cases() {
@@ -27,14 +28,17 @@ export default function Cases() {
       .finally(() => {
         if (!cancelled) setLiveLoading(false);
       });
-    const interval = setInterval(() => {
-      api.opportunities.list().then(setOpportunities).catch(() => {});
-    }, 10000);
     return () => {
       cancelled = true;
-      clearInterval(interval);
     };
   }, []);
+
+  const hasActiveOpps = opportunities.some(
+    (o) => o.status === "SCREENING" || o.status === "DILIGENCE"
+  );
+  useAdaptivePolling(() => {
+    api.opportunities.list().then(setOpportunities).catch(() => {});
+  }, hasActiveOpps ? 10000 : 30000);
 
   return (
     <div className="space-y-6">

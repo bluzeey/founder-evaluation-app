@@ -12,21 +12,21 @@ import {
 } from "lucide-react";
 import { api } from "@/api/client";
 import { useApp } from "@/store/appContext";
+import { useAdaptivePolling } from "@/hooks/useAdaptivePolling";
 import type {
   BackendPoolItem,
   BackendSourcingSchedule,
   BackendSourcingStatus,
-  BackendThesis,
   ApiError,
   SourceConfig,
 } from "@/types/backend";
 
 export default function Sourcing() {
-  const { activeThesis } = useApp();
+  const { activeThesis, state, refreshTheses } = useApp();
+  const theses = state.theses;
   const [status, setStatus] = useState<BackendSourcingStatus | null>(null);
   const [schedules, setSchedules] = useState<BackendSourcingSchedule[]>([]);
   const [pool, setPool] = useState<BackendPoolItem[]>([]);
-  const [theses, setTheses] = useState<BackendThesis[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionId, setActionId] = useState<string | null>(null);
@@ -35,16 +35,14 @@ export default function Sourcing() {
 
   const refresh = useCallback(async () => {
     try {
-      const [statusData, scheduleData, poolData, thesisData] = await Promise.all([
+      const [statusData, scheduleData, poolData] = await Promise.all([
         api.sourcing.status(),
         api.sourcing.schedules(),
         api.pool.list(),
-        api.theses.list(),
       ]);
       setStatus(statusData);
       setSchedules(scheduleData);
       setPool(poolData);
-      setTheses(thesisData);
       setError(null);
     } catch (err) {
       const e = err as ApiError;
@@ -54,17 +52,20 @@ export default function Sourcing() {
     }
   }, []);
 
+  const activeCount = status?.active_jobs.length ?? 0;
+  const pollInterval = activeCount > 0 ? 5000 : 30000;
+
   useEffect(() => {
     refresh();
-    const interval = setInterval(refresh, 5000);
-    return () => clearInterval(interval);
   }, [refresh]);
+
+  useAdaptivePolling(refresh, pollInterval);
 
   const handleSeed = async () => {
     setActionId("seed");
     try {
       await api.seed();
-      await refresh();
+      await Promise.all([refresh(), refreshTheses()]);
     } catch (err) {
       const e = err as ApiError;
       setError(e.message || "Seed failed");
@@ -78,7 +79,7 @@ export default function Sourcing() {
     setSeedSummary(null);
     try {
       const result = await api.seedAll();
-      await refresh();
+      await Promise.all([refresh(), refreshTheses()]);
       setSeedSummary(
         `Created ${result.theses_created.length} theses, ${result.schedules_created.length} schedules, ${result.founders_created.length} founders, ${result.opportunities_created.length} opportunities, ${result.pool_items_created.length} pool items.`
       );
@@ -164,7 +165,6 @@ export default function Sourcing() {
     }
   };
 
-  const activeCount = status?.active_jobs.length ?? 0;
   const recommendedCount = pool.filter((p) => p.status === "recommended").length;
 
   return (
