@@ -30,6 +30,7 @@ export default function Sourcing() {
   const [error, setError] = useState<string | null>(null);
   const [actionId, setActionId] = useState<string | null>(null);
   const [newSourceByThesis, setNewSourceByThesis] = useState<Record<string, { platform: string; keywords: string }>>({});
+  const [seedSummary, setSeedSummary] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -66,6 +67,23 @@ export default function Sourcing() {
     } catch (err) {
       const e = err as ApiError;
       setError(e.message || "Seed failed");
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const handleSeedAll = async () => {
+    setActionId("seed-all");
+    setSeedSummary(null);
+    try {
+      const result = await api.seedAll();
+      await refresh();
+      setSeedSummary(
+        `Created ${result.theses_created.length} theses, ${result.schedules_created.length} schedules, ${result.founders_created.length} founders, ${result.opportunities_created.length} opportunities, ${result.pool_items_created.length} pool items.`
+      );
+    } catch (err) {
+      const e = err as ApiError;
+      setError(e.message || "Seed all failed");
     } finally {
       setActionId(null);
     }
@@ -194,8 +212,22 @@ export default function Sourcing() {
             {actionId === "seed" ? <Loader2 size={16} className="animate-spin" /> : <Database size={16} />}
             Seed demo
           </button>
+          <button
+            onClick={handleSeedAll}
+            disabled={actionId === "seed-all"}
+            className="flex items-center gap-2 rounded-sm border border-verified/30 bg-verified/10 px-3 py-2 text-sm font-sans font-medium text-verified hover:bg-verified/20 disabled:opacity-50"
+          >
+            {actionId === "seed-all" ? <Loader2 size={16} className="animate-spin" /> : <Database size={16} />}
+            Seed all AI data
+          </button>
         </div>
       </div>
+
+      {seedSummary && (
+        <div className="rounded-sm border border-verified/30 bg-verified/10 p-3 text-sm text-verified">
+          <CheckCircle2 size={16} className="inline" /> {seedSummary}
+        </div>
+      )}
 
       {error && (
         <div className="rounded-sm border border-contradiction/30 bg-contradiction/10 p-3 text-sm text-contradiction">

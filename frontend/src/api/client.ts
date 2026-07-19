@@ -78,6 +78,14 @@ async function postForm<T>(path: string, formData: FormData): Promise<T> {
 
 export const api = {
   seed: () => post<BackendSeedResponse>("/v1/seed"),
+  seedAll: () => post<{
+    theses_created: string[];
+    schedules_created: string[];
+    founders_created: string[];
+    opportunities_created: string[];
+    pool_items_created: string[];
+    message: string;
+  }>("/v1/seed/all"),
 
   theses: {
     list: () => get<BackendThesis[]>("/v1/theses"),

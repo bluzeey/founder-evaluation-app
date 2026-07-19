@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 from database import get_db
 import crud
+import seed_data
 from models import (
     Founder,
     Thesis,
@@ -914,6 +915,170 @@ def seed_demo(db: Session = Depends(get_db)):
         "founder_id": founder.id,
         "opportunity_id": opp_id,
         "message": "Demo seeded. Founder score is near neutral with low confidence and clear unknowns.",
+    }
+
+
+@app.post("/v1/seed/all")
+def seed_all(db: Session = Depends(get_db)):
+    """Idempotently seed AI theses, schedules, sample founders, opportunities, and pool items.
+
+    Safe to call multiple times in production: it only creates records that do not already exist.
+    """
+    logger.info("endpoint.seed_all.start")
+    now = datetime.now(timezone.utc)
+
+    created_theses = []
+    created_schedules = []
+    created_founders = []
+    created_opportunities = []
+    created_pool_items = []
+
+    # 1. AI theses + 5-minute schedules.
+    for thesis_data in seed_data.AI_THESES:
+        db_thesis = crud.get_thesis(db, thesis_data["id"])
+        if not db_thesis:
+            thesis = Thesis(
+                id=thesis_data["id"],
+                name=thesis_data["name"],
+                sectors=thesis_data["sectors"],
+                stages=thesis_data["stages"],
+                geographies=thesis_data["geographies"],
+                check_size_min=thesis_data["check_size_min"],
+                check_size_max=thesis_data["check_size_max"],
+                risk_appetite=thesis_data["risk_appetite"],
+                min_evidence_requirements=thesis_data.get("min_evidence_requirements", {}),
+            )
+            db_thesis = crud.create_thesis(db, thesis)
+            created_theses.append(thesis.id)
+            logger.info("endpoint.seed_all.created_thesis thesis_id=%s", thesis.id)
+        else:
+            logger.info("endpoint.seed_all.thesis_exists thesis_id=%s", thesis_data["id"])
+
+        thesis_id = thesis_data["id"]
+        existing_schedule = crud.get_sourcing_schedule_by_thesis(db, thesis_id)
+        if not existing_schedule:
+            thesis_pydantic = crud.thesis_to_pydantic(db_thesis)
+            sources = seed_data.default_sources_for_thesis(thesis_pydantic)
+            schedule_id = f"sch_{uuid.uuid4().hex[:8]}"
+            schedule = SourcingSchedule(
+                id=schedule_id,
+                thesis_id=thesis_id,
+                enabled=True,
+                interval_seconds=300,
+                max_leads_per_run=10,
+                sources=sources,
+                next_run_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            crud.create_sourcing_schedule(db, schedule)
+            created_schedules.append(schedule_id)
+            logger.info("endpoint.seed_all.created_schedule schedule_id=%s thesis_id=%s", schedule_id, thesis_id)
+
+    # 2. Sample founders.
+    for founder_data in seed_data.SAMPLE_FOUNDERS:
+        db_founder = crud.get_founder(db, founder_data["id"])
+        if not db_founder:
+            founder = Founder(
+                id=founder_data["id"],
+                name=founder_data["name"],
+                email=founder_data["email"],
+                current_company=founder_data["current_company"],
+                role=founder_data["role"],
+                location=founder_data["location"],
+                linkedin_url=founder_data.get("linkedin_url"),
+                github_url=founder_data.get("github_url"),
+            )
+            crud.create_founder(db, founder)
+            created_founders.append(founder.id)
+            logger.info("endpoint.seed_all.created_founder founder_id=%s", founder.id)
+
+            # Trigger social background research automatically (matches create_founder behavior).
+            background_id = f"soc_{uuid.uuid4().hex[:8]}"
+            crud.update_founder(db, founder.id, {"social_background_id": background_id})
+            from tasks.social_research import store_social_background, research_social_background
+            pending = SocialMediaBackground(
+                id=background_id,
+                founder_id=founder.id,
+                status="pending",
+                linkedin_url=founder.linkedin_url,
+                github_url=founder.github_url,
+            )
+            store_social_background(pending)
+            research_social_background.delay(
+                founder_id=founder.id,
+                name=founder.name,
+                email=founder.email,
+                linkedin_url=founder.linkedin_url,
+                github_url=founder.github_url,
+                auto_score=True,
+            )
+        else:
+            logger.info("endpoint.seed_all.founder_exists founder_id=%s", founder_data["id"])
+
+    # 3. Sample opportunities.
+    for opp_data in seed_data.SAMPLE_OPPORTUNITIES:
+        db_opp = crud.get_opportunity(db, opp_data["opportunity_id"])
+        if not db_opp:
+            opp = OpportunityScreen(
+                opportunity_id=opp_data["opportunity_id"],
+                founder_id=opp_data["founder_id"],
+                founder_score=opp_data["founder_score"],
+                founder_confidence=opp_data["founder_confidence"],
+                founder_market_fit=FounderMarketFit(score=None, confidence=0.0, coverage=0.0),
+                team_completeness=TeamCompleteness(score=None, confidence=0.0, coverage=0.0),
+                market_posture=opp_data["market_posture"],
+                market_confidence=opp_data["market_confidence"],
+                idea_vs_market_posture=opp_data["idea_vs_market_posture"],
+                idea_vs_market_confidence=opp_data["idea_vs_market_confidence"],
+                next_founder_action=opp_data["next_founder_action"],
+            )
+            crud.create_or_update_opportunity(db, opp)
+            created_opportunities.append(opp_data["opportunity_id"])
+            logger.info("endpoint.seed_all.created_opportunity opportunity_id=%s", opp_data["opportunity_id"])
+        else:
+            logger.info("endpoint.seed_all.opportunity_exists opportunity_id=%s", opp_data["opportunity_id"])
+
+    # 4. Sample pool items.
+    for item_data in seed_data.SAMPLE_POOL_ITEMS:
+        db_item = crud.get_pool_item(db, item_data["id"])
+        if not db_item:
+            item = FounderPoolItem(
+                id=item_data["id"],
+                name=item_data["name"],
+                email=item_data["email"],
+                current_company=item_data["current_company"],
+                role=item_data["role"],
+                location=item_data["location"],
+                linkedin_url=item_data.get("linkedin_url"),
+                github_url=item_data.get("github_url"),
+                source_url=item_data.get("source_url"),
+                source=item_data.get("source"),
+                reason=item_data["reason"],
+                status=PoolItemStatus.RECOMMENDED,
+                created_at=now,
+            )
+            crud.create_pool_items(db, [item])
+            created_pool_items.append(item_data["id"])
+            logger.info("endpoint.seed_all.created_pool_item item_id=%s", item_data["id"])
+        else:
+            logger.info("endpoint.seed_all.pool_item_exists item_id=%s", item_data["id"])
+
+    logger.info(
+        "endpoint.seed_all.end theses=%s schedules=%s founders=%s opportunities=%s pool_items=%s",
+        len(created_theses),
+        len(created_schedules),
+        len(created_founders),
+        len(created_opportunities),
+        len(created_pool_items),
+    )
+    return {
+        "theses_created": created_theses,
+        "schedules_created": created_schedules,
+        "founders_created": created_founders,
+        "opportunities_created": created_opportunities,
+        "pool_items_created": created_pool_items,
+        "message": "Seed applied. Existing records were skipped.",
     }
 
 
