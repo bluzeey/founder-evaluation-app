@@ -6,6 +6,7 @@ from typing import Any, List, Optional
 
 import httpx
 
+from .http_utils import raise_for_status
 from .prompts import DOCUMENT_EXTRACTION_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -28,11 +29,13 @@ class DocumentAgent:
 
         self.model = model or os.environ.get("UMANS_DOCUMENT_MODEL", "umans-coder")
         self.timeout = float(timeout or os.environ.get("UMANS_RESEARCH_TIMEOUT", "120"))
+        self.max_tokens = int(os.environ.get("UMANS_MAX_TOKENS", "8000"))
 
         logger.info(
-            "document_agent.configured model=%s timeout=%s",
+            "document_agent.configured model=%s timeout=%s max_tokens=%s",
             self.model,
             self.timeout,
+            self.max_tokens,
         )
 
     def extract(
@@ -72,13 +75,13 @@ class DocumentAgent:
                 {"role": "system", "content": DOCUMENT_EXTRACTION_SYSTEM_PROMPT},
                 {"role": "user", "content": user_message},
             ],
-            "max_completion_tokens": 8000,
+            "max_completion_tokens": self.max_tokens,
         }
 
         with httpx.Client(timeout=self.timeout) as client:
             logger.info("document_agent.extract.request model=%s", self.model)
             response = client.post(UMANS_BASE_URL, headers=headers, json=payload)
-            response.raise_for_status()
+            raise_for_status(response)
             data = response.json()
 
         parsed = self._parse_response(data)

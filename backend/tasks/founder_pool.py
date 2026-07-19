@@ -12,6 +12,7 @@ import crud
 import db_models
 from models import FounderPoolItem, PoolItemStatus, SourcingJob
 from research import SourcingAgent
+from tasks.retry_utils import SOURCING_MAX_RETRIES, SOURCING_RETRY_BASE_DELAY, maybe_retry
 
 logger = logging.getLogger(__name__)
 
@@ -323,7 +324,7 @@ def run_sourcing_job(thesis_id: str) -> str:
         db.close()
 
 
-@app.task(bind=True, max_retries=2, default_retry_delay=5)
+@app.task(bind=True, max_retries=2, default_retry_delay=30)
 def dispatch_sourcing_jobs(self) -> Dict[str, Any]:
     """Celery beat task that dispatches sourcing jobs for due schedules."""
     now = datetime.now(timezone.utc)
@@ -387,7 +388,12 @@ def dispatch_sourcing_jobs(self) -> Dict[str, Any]:
         db.close()
 
 
-@app.task(bind=True, max_retries=2, default_retry_delay=5)
+@app.task(
+    bind=True,
+    max_retries=SOURCING_MAX_RETRIES,
+    default_retry_delay=SOURCING_RETRY_BASE_DELAY,
+    rate_limit="4/m",
+)
 def refresh_pool_task(
     self,
     sectors: Optional[List[str]] = None,
@@ -412,7 +418,7 @@ def refresh_pool_task(
         )
     except Exception as exc:
         logger.error("founder_pool.refresh_pool_task.error error=%s", exc)
-        raise self.retry(exc=exc)
+        maybe_retry(self, exc)
 
     return {
         "status": "completed",

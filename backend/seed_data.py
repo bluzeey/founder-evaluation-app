@@ -3,10 +3,17 @@
 Contains AI-focused theses, sample founders, opportunities, and pool items.
 All IDs are prefixed with "demo_" to avoid collisions with live data.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import os
 from typing import List, Dict, Any
 
 from models import SourceConfig, Thesis
+
+# Default cadence for seeded sourcing schedules. 1 hour is conservative for live
+# web-search LLM calls and avoids rate-limit storms.
+DEFAULT_SOURCING_INTERVAL_SECONDS = int(
+    os.environ.get("DEFAULT_SOURCING_INTERVAL_SECONDS", "3600")
+)
 
 # ---------------------------------------------------------------------------
 # AI-focused theses with default 5-minute sourcing schedules.
@@ -69,6 +76,19 @@ AI_THESES: List[Dict[str, Any]] = [
         "min_evidence_requirements": {},
     },
 ]
+
+
+def staggered_next_run_at(
+    now: datetime,
+    index: int,
+    total: int,
+    interval_seconds: int = DEFAULT_SOURCING_INTERVAL_SECONDS,
+) -> datetime:
+    """Spread schedule starts evenly across the interval so they don't all fire at once."""
+    if total <= 0:
+        return now + timedelta(seconds=interval_seconds)
+    stagger_seconds = (interval_seconds // total) * index
+    return now + timedelta(seconds=stagger_seconds)
 
 
 def default_sources_for_thesis(thesis: Thesis) -> List[SourceConfig]:

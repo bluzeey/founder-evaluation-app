@@ -9,6 +9,7 @@ import crud
 from models import SocialMediaBackground
 from research import SocialAgent, create_social_background
 from scoring import calculate_founder_score
+from tasks.retry_utils import SOCIAL_RESEARCH_MAX_RETRIES, SOCIAL_RESEARCH_RETRY_BASE_DELAY, maybe_retry
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,12 @@ def load_social_background(founder_id: str) -> Optional[SocialMediaBackground]:
         db.close()
 
 
-@app.task(bind=True, max_retries=2, default_retry_delay=5)
+@app.task(
+    bind=True,
+    max_retries=SOCIAL_RESEARCH_MAX_RETRIES,
+    default_retry_delay=SOCIAL_RESEARCH_RETRY_BASE_DELAY,
+    rate_limit="4/m",
+)
 def research_social_background(
     self,
     founder_id: str,
@@ -84,7 +90,7 @@ def research_social_background(
                 error_message=str(exc),
             )
             crud.update_social_background(db, failed)
-            raise self.retry(exc=exc)
+            maybe_retry(self, exc)
 
         background = create_social_background(
             founder_id=founder_id,

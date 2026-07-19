@@ -6,6 +6,7 @@ from typing import Any, List, Optional
 
 import httpx
 
+from .http_utils import is_retryable_status, raise_for_status
 from .prompts import SOURCING_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -33,12 +34,20 @@ class SourcingAgent:
         )
         self.model = model or os.environ.get("UMANS_SOURCING_MODEL", "umans-coder")
         self.timeout = float(timeout or os.environ.get("UMANS_RESEARCH_TIMEOUT", "60"))
+        self.max_tokens = int(os.environ.get("UMANS_MAX_TOKENS", "8000"))
+        self.enable_web_search = os.environ.get("UMANS_ENABLE_WEB_SEARCH", "true").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
 
         logger.info(
-            "sourcing_agent.configured provider=%s model=%s timeout=%s",
+            "sourcing_agent.configured provider=%s model=%s timeout=%s max_tokens=%s web_search=%s",
             self.websearch_provider,
             self.model,
             self.timeout,
+            self.max_tokens,
+            self.enable_web_search,
         )
 
     def discover(
@@ -94,24 +103,26 @@ class SourcingAgent:
             f"For each recommendation, include a 'source' field matching the platform that found it."
         )
 
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": SOURCING_SYSTEM_PROMPT},
                 {"role": "user", "content": user_message},
             ],
-            "tools": [{"type": "web_search"}],
-            "max_completion_tokens": 8000,
+            "max_completion_tokens": self.max_tokens,
         }
+        if self.enable_web_search:
+            payload["tools"] = [{"type": "web_search"}]
 
         with httpx.Client(timeout=self.timeout) as client:
             logger.info(
-                "sourcing_agent.discover.request provider=%s model=%s",
+                "sourcing_agent.discover.request provider=%s model=%s enable_web_search=%s",
                 self.websearch_provider,
                 self.model,
+                self.enable_web_search,
             )
             response = client.post(UMANS_BASE_URL, headers=headers, json=payload)
-            response.raise_for_status()
+            raise_for_status(response)
             data = response.json()
 
         parsed = self._parse_response(data)

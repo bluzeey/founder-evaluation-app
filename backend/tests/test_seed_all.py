@@ -21,11 +21,11 @@ def test_seed_all_is_idempotent(client: TestClient):
     assert data2["opportunities_created"] == []
     assert data2["pool_items_created"] == []
 
-    # Schedules should have sources and a 5-minute interval.
+    # Schedules should have sources and a 1-hour interval.
     schedules = client.get("/v1/sourcing/schedules").json()
     assert len(schedules) == 5
     for s in schedules:
-        assert s["interval_seconds"] == 300
+        assert s["interval_seconds"] == 3600
         assert len(s["sources"]) == 2
         assert s["sources"][0]["platform"] == "linkedin"
         assert s["sources"][1]["platform"] == "twitter"

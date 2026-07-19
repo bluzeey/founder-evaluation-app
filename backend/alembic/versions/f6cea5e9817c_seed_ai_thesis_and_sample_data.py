@@ -5,7 +5,7 @@ Revises: 45a509d755d8
 Create Date: 2026-07-19 13:10:31.136625
 
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Sequence, Union
 
 from alembic import op
@@ -274,18 +274,21 @@ def upgrade() -> None:
         sa.column("created_at"),
         sa.column("updated_at"),
     )
+    DEFAULT_INTERVAL_SECONDS = 3600
     schedule_rows = []
     for idx, thesis in enumerate(AI_THESES):
+        total = len(AI_THESES)
+        stagger_seconds = (DEFAULT_INTERVAL_SECONDS // total) * idx
         schedule_rows.append(
             {
                 "id": f"demo_sch_{idx + 1}",
                 "thesis_id": thesis["id"],
                 "enabled": True,
-                "interval_seconds": 300,
+                "interval_seconds": DEFAULT_INTERVAL_SECONDS,
                 "max_leads_per_run": 10,
                 "sources": _default_sources_for_thesis(thesis),
                 "last_run_at": None,
-                "next_run_at": None,
+                "next_run_at": NOW + timedelta(seconds=stagger_seconds),
                 "created_at": NOW,
                 "updated_at": NOW,
             }

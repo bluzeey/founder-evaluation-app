@@ -10,6 +10,7 @@ from document_extractor import extract_text
 from models import Claim, EvidenceItem, Founder, SourcingJob, TrustStatus
 from research import DocumentAgent
 from research.extractor import create_founder_from_research, evidence_from_llm
+from tasks.retry_utils import DOCUMENT_MAX_RETRIES, DOCUMENT_RETRY_BASE_DELAY, maybe_retry
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,12 @@ def _trust_status_from_string(value: Optional[str]) -> TrustStatus:
         return TrustStatus.FOUNDER_REPORTED
 
 
-@app.task(bind=True, max_retries=2, default_retry_delay=5)
+@app.task(
+    bind=True,
+    max_retries=DOCUMENT_MAX_RETRIES,
+    default_retry_delay=DOCUMENT_RETRY_BASE_DELAY,
+    rate_limit="4/m",
+)
 def extract_document(
     self,
     file_bytes_b64: str,
@@ -61,7 +67,7 @@ def extract_document(
             result = agent.extract(text, filename=filename)
         except Exception as exc:
             logger.error("document_extraction.task.error error=%s", exc)
-            raise self.retry(exc=exc)
+            maybe_retry(self, exc)
 
         # Create claims from extracted data.
         raw_claims = result.get("claims", []) or []

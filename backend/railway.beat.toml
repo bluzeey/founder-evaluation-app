@@ -4,6 +4,6 @@
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "celery -A celery_app beat -l info"
+startCommand = "alembic upgrade head && celery -A celery_app beat -l info"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3

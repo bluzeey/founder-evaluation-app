@@ -1,7 +1,7 @@
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict, Any
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
@@ -849,7 +849,7 @@ def seed_demo(db: Session = Depends(get_db)):
     )
 
     # Create a default recurring sourcing schedule for the thesis so the agent keeps collecting leads.
-    # Runs every 5 minutes with LinkedIn and Twitter keyword searches based on the thesis.
+    # Runs every hour with LinkedIn and Twitter keyword searches based on the thesis.
     schedule_id = f"sch_{uuid.uuid4().hex[:8]}"
     now = datetime.now(timezone.utc)
     default_sources = [
@@ -860,10 +860,10 @@ def seed_demo(db: Session = Depends(get_db)):
         id=schedule_id,
         thesis_id=thesis.id,
         enabled=True,
-        interval_seconds=300,
+        interval_seconds=seed_data.DEFAULT_SOURCING_INTERVAL_SECONDS,
         max_leads_per_run=10,
         sources=default_sources,
-        next_run_at=now,
+        next_run_at=now + timedelta(seconds=seed_data.DEFAULT_SOURCING_INTERVAL_SECONDS),
         created_at=now,
         updated_at=now,
     )
@@ -933,8 +933,9 @@ def seed_all(db: Session = Depends(get_db)):
     created_opportunities = []
     created_pool_items = []
 
-    # 1. AI theses + 5-minute schedules.
-    for thesis_data in seed_data.AI_THESES:
+    # 1. AI theses + staggered hourly schedules.
+    total_theses = len(seed_data.AI_THESES)
+    for idx, thesis_data in enumerate(seed_data.AI_THESES):
         db_thesis = crud.get_thesis(db, thesis_data["id"])
         if not db_thesis:
             thesis = Thesis(
@@ -964,10 +965,10 @@ def seed_all(db: Session = Depends(get_db)):
                 id=schedule_id,
                 thesis_id=thesis_id,
                 enabled=True,
-                interval_seconds=300,
+                interval_seconds=seed_data.DEFAULT_SOURCING_INTERVAL_SECONDS,
                 max_leads_per_run=10,
                 sources=sources,
-                next_run_at=now,
+                next_run_at=seed_data.staggered_next_run_at(now, idx, total_theses),
                 created_at=now,
                 updated_at=now,
             )
