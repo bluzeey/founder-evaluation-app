@@ -138,6 +138,21 @@ pytest tests/ -v
 - **Manual sourcing:** `POST /v1/theses/{id}/source-now` triggers a one-time sourcing job immediately.
 - **Job history:** `GET /v1/sourcing/jobs` returns the list of sourcing runs with counts of leads found, added, and skipped.
 
+## Founder enrichment
+
+The sourcing loop finds new leads, but a separate recurring pipeline deepens data on each existing founder so confidence does not stay at 0. **Sourcing and enrichment are sequenced, not parallel:** automatic sourcing is paused while any founder is still awaiting its enrichment pass, and resumes only once every founder has been enriched once.
+
+- **Enrich-once rule:** each founder is enriched exactly once. The dispatcher only picks founders that have never completed an enrichment pass (`enrichment_attempts == 0`) and are below `ENRICHMENT_CONFIDENCE_THRESHOLD` (default 0.30). After one pass, the founder never re-enters the queue.
+- **Sourcing gate:** the automatic beat dispatcher (`dispatch_sourcing_jobs`) checks `count_founders_blocking_sourcing` on every tick. If any founder is below 0.30 confidence AND has not yet been enriched once, sourcing is skipped for that tick (`skipped_reason: enrichment_pending`). Sourcing resumes once the queue is drained. In-flight enrichments keep blocking until the chain completes and increments `enrichment_attempts`.
+- **Manual overrides:** `POST /v1/founders/pool/refresh` and `POST /v1/theses/{id}/source-now` are explicit user actions and are NOT gated — you can always force a sourcing pass manually.
+- **Dispatcher:** Celery beat runs `dispatch_enrichment_jobs` every `ENRICHMENT_DISPATCH_INTERVAL_SECONDS` (default 180s). It selects up to `ENRICHMENT_MAX_FOUNDERS_PER_RUN` (default 5) founders per tick, debounced by `ENRICHMENT_MIN_GAP_SECONDS` (default 600s) so an in-flight founder isn't re-queued.
+- **3-stage chain:** for each candidate, `POST /v1/founders/{id}/enrich` queues `enrich_founder_chain`, which runs sequentially:
+  1. **Social** — re-runs LinkedIn/GitHub background research (skipped if no links).
+  2. **Deep web** — OpenAI + Tavily research across `news`, `company_blog`, `twitter`; persists `ai_research_summary` + sources and adds evidence.
+  3. **Estimate** — derives one evidence item per dimension from all available context and re-scores.
+  Each stage records an `EnrichmentRun` row with `confidence_before`/`confidence_after`; `enrichment_attempts` is incremented when the chain finishes.
+- **Observability:** `GET /v1/enrichment/runs?founder_id=…` lists recent runs; `GET /v1/enrichment/status` returns the count of founders below threshold and the last dispatch time.
+
 ## AI configuration
 
 Set environment variables on Railway:
@@ -179,6 +194,15 @@ CIRCUIT_BREAKER_COOLDOWN_SECONDS=600
 
 SOURCING_DISPATCH_INTERVAL_SECONDS=60
 POOL_LOCK_TTL_SECONDS=300
+
+# Enrichment pipeline: a recurring Celery beat task gathers more data around
+# each founder (social research → deep web research → AI estimate) so founders
+# do not sit at 0% confidence. Only founders below the threshold are enriched,
+# debounced per founder.
+ENRICHMENT_DISPATCH_INTERVAL_SECONDS=180
+ENRICHMENT_CONFIDENCE_THRESHOLD=0.30
+ENRICHMENT_MIN_GAP_SECONDS=600
+ENRICHMENT_MAX_FOUNDERS_PER_RUN=5
 ```
 
 The deterministic score engine does not call an LLM; only the evidence extraction, grading, and memo agents do.

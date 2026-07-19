@@ -31,6 +31,7 @@ class Founder(Base):
     social_background_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     latest_score_snapshot_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     last_enriched_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    enrichment_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utc_now, onupdate=_utc_now

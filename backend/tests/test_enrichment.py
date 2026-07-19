@@ -135,6 +135,7 @@ def test_enrich_founder_chain_runs_all_three_stages(
 
     founder = crud.get_founder(db, "fnd_chain")
     assert founder.last_enriched_at is not None
+    assert founder.enrichment_attempts == 1
 
 
 def test_dispatch_enrichment_jobs_queues_below_threshold(db):
@@ -146,3 +147,38 @@ def test_dispatch_enrichment_jobs_queues_below_threshold(db):
     assert result["dispatched"][0]["founder_id"] == "fnd_disp"
     founder = crud.get_founder(db, "fnd_disp")
     assert founder.last_enriched_at is not None
+
+
+def test_enrichment_dispatcher_skips_already_enriched_founders(db):
+    """Enrich-once: a founder that already has enrichment_attempts > 0 is not re-queued."""
+    _create_founder(db, "fnd_done")
+    crud.increment_enrichment_attempts(db, "fnd_done")
+    with patch("tasks.enrichment_task.enrich_founder_chain") as mock_chain:
+        result = dispatch_enrichment_jobs.run()
+
+    assert result["dispatched"] == []
+    mock_chain.delay.assert_not_called()
+
+
+def test_dispatch_sourcing_skipped_when_founders_unenriched(db):
+    """Automatic sourcing pauses while any below-threshold founder is unenriched."""
+    _create_founder(db, "fnd_block")
+    from tasks.founder_pool import dispatch_sourcing_jobs
+
+    result = dispatch_sourcing_jobs.run()
+    assert result.get("skipped_reason") == "enrichment_pending"
+    assert result.get("below_threshold_unenriched") == 1
+    assert result["dispatched"] == []
+
+
+def test_dispatch_sourcing_resumes_after_enriched_once(db):
+    """Once a founder has been enriched once it no longer blocks sourcing."""
+    _create_founder(db, "fnd_unblock")
+    crud.increment_enrichment_attempts(db, "fnd_unblock")  # mark as enriched once
+
+    from tasks.founder_pool import dispatch_sourcing_jobs
+
+    result = dispatch_sourcing_jobs.run()
+    # No skip due to enrichment; with no due schedules, dispatched is empty.
+    assert result.get("skipped_reason") != "enrichment_pending"
+    assert result["dispatched"] == []

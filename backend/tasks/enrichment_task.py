@@ -352,10 +352,14 @@ def enrich_founder_chain(self, founder_id: str) -> Dict[str, Any]:
             logger.error("enrichment.chain.stage_error founder_id=%s stage=%s error=%s", founder_id, stage.__name__, exc)
             results.append({"founder_id": founder_id, "stage": stage.__name__, "status": "failed", "error": str(exc)})
 
-    # Stamp last_enriched_at so the dispatcher debounces this founder.
+    # Stamp last_enriched_at so the dispatcher debounces this founder, and
+    # increment enrichment_attempts so the founder is no longer "never enriched".
+    # This is what unblocks sourcing: a founder with enrichment_attempts > 0
+    # stops counting toward the sourcing gate, even if confidence is still low.
     db = SessionLocal()
     try:
         crud.mark_founder_enriched(db, founder_id)
+        crud.increment_enrichment_attempts(db, founder_id)
     finally:
         db.close()
 
@@ -378,11 +382,16 @@ def dispatch_enrichment_jobs(self) -> Dict[str, Any]:
     db = SessionLocal()
     dispatched = []
     try:
+        # Enrich-once semantics: only founders that have never completed an
+        # enrichment pass (enrichment_attempts == 0) and are below the
+        # confidence threshold are picked. Each founder is enriched exactly
+        # once; after that it never re-enters the enrichment queue.
         candidates = crud.list_founders_below_confidence(
             db,
             threshold=ENRICHMENT_CONFIDENCE_THRESHOLD,
             max_results=ENRICHMENT_MAX_FOUNDERS_PER_RUN,
             min_gap_seconds=ENRICHMENT_MIN_GAP_SECONDS,
+            never_enriched_only=True,
         )
         for db_founder in candidates:
             # Stamp last_enriched_at now so the founder isn't re-picked before

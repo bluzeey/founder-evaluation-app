@@ -800,12 +800,17 @@ def list_founders_below_confidence(
     threshold: float,
     max_results: int,
     min_gap_seconds: int,
+    never_enriched_only: bool = False,
 ) -> List[db_models.Founder]:
     """Return founders whose latest snapshot confidence is below `threshold`
     and that have not been enriched within `min_gap_seconds`.
 
     Cold-start founders (no snapshot yet, i.e. 0% confidence) are included.
     Ordered by confidence ASC so the weakest founders are enriched first.
+
+    When `never_enriched_only` is True, only founders that have never completed
+    an enrichment pass (``enrichment_attempts == 0``) are returned. This enforces
+    the "enrich once" rule: each founder is enriched exactly once.
     """
     from datetime import timedelta
 
@@ -816,15 +821,12 @@ def list_founders_below_confidence(
             db_models.ScoreSnapshot,
             db_models.ScoreSnapshot.id == db_models.Founder.latest_score_snapshot_id,
         )
-        .filter(
-            db_models.Founder.last_enriched_at == None  # noqa: E711
-        )
         .all()
     )
-    # Two-pass filter: SQLAlchemy `or_` on JSONB-joined confidence is fiddly;
-    # do the confidence + gap check in Python for clarity.
     candidates = []
     for f in founders:
+        if never_enriched_only and f.enrichment_attempts > 0:
+            continue
         snapshot = (
             db.query(db_models.ScoreSnapshot)
             .filter(db_models.ScoreSnapshot.id == f.latest_score_snapshot_id)
@@ -835,12 +837,50 @@ def list_founders_below_confidence(
         confidence = snapshot.overall_confidence if snapshot else 0.0
         if confidence >= threshold:
             continue
+        # When enriching once-only, debounce in-flight founders via last_enriched_at
+        # so the same founder isn't re-queued before its chain completes.
         if f.last_enriched_at is not None and f.last_enriched_at > cutoff:
             continue
         candidates.append((confidence, f))
 
     candidates.sort(key=lambda pair: pair[0])
     return [f for _, f in candidates[:max_results]]
+
+
+def count_founders_blocking_sourcing(db: Session, threshold: float) -> int:
+    """Count founders that should keep automatic sourcing paused.
+
+    A founder blocks sourcing while it is below the confidence threshold AND
+    has not yet completed an enrichment pass (``enrichment_attempts == 0``).
+    Once a founder has been enriched once it stops blocking, even if its
+    confidence is still below threshold — matching the "enrich once" rule.
+    In-flight enrichments (queued but not completed) keep blocking until the
+    chain finishes and increments ``enrichment_attempts``.
+    """
+    founders = db.query(db_models.Founder).all()
+    count = 0
+    for f in founders:
+        if f.enrichment_attempts > 0:
+            continue
+        snapshot = (
+            db.query(db_models.ScoreSnapshot)
+            .filter(db_models.ScoreSnapshot.id == f.latest_score_snapshot_id)
+            .first()
+            if f.latest_score_snapshot_id
+            else None
+        )
+        confidence = snapshot.overall_confidence if snapshot else 0.0
+        if confidence < threshold:
+            count += 1
+    return count
+
+
+def increment_enrichment_attempts(db: Session, founder_id: str) -> None:
+    db_founder = get_founder(db, founder_id)
+    if not db_founder:
+        return
+    db_founder.enrichment_attempts = (db_founder.enrichment_attempts or 0) + 1
+    db.commit()
 
 
 def mark_founder_enriched(db: Session, founder_id: str, enriched_at: Optional[datetime] = None) -> None:

@@ -437,13 +437,39 @@ def run_sourcing_job(thesis_id: str) -> str:
 
 @app.task(bind=True, max_retries=2, default_retry_delay=30)
 def dispatch_sourcing_jobs(self) -> Dict[str, Any]:
-    """Celery beat task that dispatches sourcing jobs for due schedules."""
+    """Celery beat task that dispatches sourcing jobs for due schedules.
+
+    Gated on enrichment: automatic sourcing is paused while any founder is
+    below the enrichment confidence threshold AND has not yet completed an
+    enrichment pass. Once every founder has been enriched once, sourcing
+    resumes. Manual sourcing endpoints (Refresh pool / Source now) are NOT
+    gated and remain available as explicit overrides.
+    """
     now = datetime.now(timezone.utc)
     logger.info("founder_pool.dispatch_sourcing_jobs.start now=%s", now)
 
     db = SessionLocal()
     dispatched = []
     try:
+        # Enrichment gate: do not source new leads while existing founders are
+        # still awaiting their one enrichment pass. Founders that have already
+        # been enriched once (enrichment_attempts > 0) no longer block.
+        enrichment_threshold = float(
+            os.environ.get("ENRICHMENT_CONFIDENCE_THRESHOLD", "0.30")
+        )
+        blocking = crud.count_founders_blocking_sourcing(db, threshold=enrichment_threshold)
+        if blocking > 0:
+            logger.info(
+                "founder_pool.dispatch_sourcing_jobs.skip_enrichment_pending below_threshold_unenriched=%s",
+                blocking,
+            )
+            return {
+                "dispatched": [],
+                "skipped_reason": "enrichment_pending",
+                "below_threshold_unenriched": blocking,
+                "now": now.isoformat(),
+            }
+
         due_schedules = crud.list_due_sourcing_schedules(db, now)
         for db_schedule in due_schedules:
             schedule = crud.sourcing_schedule_to_pydantic(db_schedule)
