@@ -24,4 +24,4 @@ app.conf.update(
     },
 )
 
-app.autodiscover_tasks(["tasks"])
+app.conf.imports = ("tasks.social_research", "tasks.founder_pool")
