@@ -14,7 +14,7 @@ def _clamp(value: float, min_val: float = 0.0, max_val: float = 1.0) -> float:
 
 def evidence_from_llm(founder_id: str, item: dict[str, Any]) -> EvidenceItem:
     """Coerce one LLM evidence dict into a valid EvidenceItem."""
-    dimension = _DIMENSION_MAP.get(item.get("dimension", ""), Dimension.CLAIM_RELIABILITY)
+    dimension = _DIMENSION_MAP.get(item.get("dimension", ""), Dimension.COLLABORATION_AND_INTEGRITY)
     evidence_type = _EVIDENCE_TYPE_MAP.get(
         item.get("evidence_type", ""), EvidenceType.UNVERIFIED_PROXY
     )

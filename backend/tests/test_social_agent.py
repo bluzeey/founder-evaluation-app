@@ -22,7 +22,7 @@ SAMPLE_AGENT_RESULT = {
     ],
     "evidence": [
         {
-            "dimension": "execution",
+            "dimension": "execution_and_shipping",
             "observation": "Shipped and maintained an open-source CLI tool on GitHub with regular commits",
             "source_type": "github",
             "source_locator": "https://github.com/janedoe/project-a",
@@ -38,7 +38,7 @@ SAMPLE_AGENT_RESULT = {
             "unknowns": "Commercial traction of the tool is unclear.",
         },
         {
-            "dimension": "customer_selling",
+            "dimension": "commercial_recruiting_distribution_ability",
             "observation": "Conducted 30 customer discovery interviews and shared learnings publicly",
             "source_type": "linkedin",
             "source_locator": "https://linkedin.com/in/janedoe",
@@ -74,7 +74,9 @@ def test_create_social_background_extracts_footprints_and_evidence():
     assert bg.footprints[0].source_trust == 0.8
     assert len(bg.evidence_items) == 2
 
-    execution = next(e for e in bg.evidence_items if e.dimension == Dimension.EXECUTION)
+    execution = next(
+        e for e in bg.evidence_items if e.dimension == Dimension.EXECUTION_AND_SHIPPING
+    )
     assert execution.evidence_type == EvidenceType.INSPECTED_ARTIFACT
     assert execution.status == EvidenceStatus.POSITIVE
 

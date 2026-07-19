@@ -18,7 +18,7 @@ Return ONLY a valid JSON object matching this schema:
   "sources": ["https://url1", "https://url2"],
   "evidence": [
     {
-      "dimension": "execution|learning|customer_selling|judgment|leadership|ownership|claim_reliability",
+      "dimension": "execution_and_shipping|technical_or_domain_ability|agency_and_initiative|learning_velocity|resilience_and_persistence|commercial_recruiting_distribution_ability|collaboration_and_integrity|prior_venture_outcomes",
       "observation": "A single, specific, cited finding",
       "source_type": "linkedin|twitter|github|news|company_blog|crunchbase|other",
       "source_locator": "https://...",
@@ -37,13 +37,14 @@ Return ONLY a valid JSON object matching this schema:
 }
 
 Dimension mapping:
-- execution: shipped products, milestones, revenue/growth, operational delivery
-- learning: pivots, lessons shared, adaptation, belief updating
-- customer_selling: sales wins, testimonials, GTM, customer interviews
-- judgment: strategic decisions, prioritization, hiring, resource allocation
-- leadership: team building, vision, public speaking, executive presence
-- ownership: setback ownership, resilience, accountability
-- claim_reliability: consistency of public claims, verification level, contradictions
+- execution_and_shipping: shipped products, milestones, revenue/growth, operational delivery
+- technical_or_domain_ability: work, research, patents, code, domain outcomes
+- agency_and_initiative: self-directed work, resource acquisition, outreach
+- learning_velocity: iteration history, response to feedback, skills progression
+- resilience_and_persistence: continued progress after setbacks and recovery actions
+- commercial_recruiting_distribution_ability: customers, partnerships, hires, community growth
+- collaboration_and_integrity: references, team history, claim consistency
+- prior_venture_outcomes: prior company results, users, revenue, exit, or learning
 
 Evidence type guidance:
 - verified_outcome: externally verifiable metric or outcome (funding, revenue, shipped feature)
@@ -86,7 +87,7 @@ Return ONLY a valid JSON object matching this schema:
   ],
   "evidence": [
     {
-      "dimension": "execution|learning|customer_selling|judgment|leadership|ownership|claim_reliability",
+      "dimension": "execution_and_shipping|technical_or_domain_ability|agency_and_initiative|learning_velocity|resilience_and_persistence|commercial_recruiting_distribution_ability|collaboration_and_integrity|prior_venture_outcomes",
       "observation": "A single, specific, cited finding",
       "source_type": "linkedin|github|news|company_blog|other",
       "source_locator": "https://...",
@@ -114,13 +115,14 @@ Strict exclusions (do NOT score on these):
 - Vague endorsements without specific demonstrated behavior.
 
 Dimension mapping:
-- execution: shipped products/features, milestones, operational delivery visible in repos/posts
-- learning: pivots, lessons shared, adaptation, belief updating
-- customer_selling: sales wins, testimonials, GTM, customer interviews
-- judgment: strategic decisions, prioritization, hiring, resource allocation
-- leadership: team building, vision, public communication, executive presence
-- ownership: setback ownership, resilience, accountability
-- claim_reliability: consistency of public claims, verification level, contradictions
+- execution_and_shipping: shipped products/features, milestones, operational delivery visible in repos/posts
+- technical_or_domain_ability: work, research, patents, code, domain outcomes visible in profiles
+- agency_and_initiative: self-directed work, resource acquisition, outreach visible in posts/activity
+- learning_velocity: iteration history, response to feedback, skills progression visible in repos/posts
+- resilience_and_persistence: continued progress after setbacks and recovery actions visible in posts/history
+- commercial_recruiting_distribution_ability: customers, partnerships, hires, community growth visible in posts/profiles
+- collaboration_and_integrity: references, team history, claim consistency across sources
+- prior_venture_outcomes: prior company results, users, revenue, exit, or learning from public sources
 
 Evidence type guidance:
 - verified_outcome: externally verifiable metric or outcome (funding, revenue, shipped feature)
@@ -176,7 +178,7 @@ Return ONLY a valid JSON object matching this schema:
   ],
   "evidence": [
     {
-      "dimension": "execution|learning|customer_selling|judgment|leadership|ownership|claim_reliability",
+      "dimension": "execution_and_shipping|technical_or_domain_ability|agency_and_initiative|learning_velocity|resilience_and_persistence|commercial_recruiting_distribution_ability|collaboration_and_integrity|prior_venture_outcomes",
       "observation": "A single, specific finding from the document",
       "source_type": "pitch_deck|financial_statement|customer_reference|demo|founder_statement|market_research|other",
       "source_locator": "Where in the document this was found, e.g. 'Slide 4: Traction'",
@@ -203,13 +205,14 @@ Trust status mapping:
 - missing: the document omits expected proof
 
 Dimension mapping:
-- execution: shipped products, milestones, revenue/growth, operational delivery
-- learning: pivots, lessons shared, adaptation, belief updating
-- customer_selling: sales wins, testimonials, GTM, customer interviews
-- judgment: strategic decisions, prioritization, hiring, resource allocation
-- leadership: team building, vision, communication
-- ownership: setback ownership, resilience, accountability
-- claim_reliability: consistency of claims, verification level, contradictions
+- execution_and_shipping: shipped products, milestones, revenue/growth, operational delivery
+- technical_or_domain_ability: work, research, patents, code, domain outcomes
+- agency_and_initiative: self-directed work, resource acquisition, outreach
+- learning_velocity: iteration history, response to feedback, skills progression
+- resilience_and_persistence: continued progress after setbacks and recovery actions
+- commercial_recruiting_distribution_ability: customers, partnerships, hires, community growth
+- collaboration_and_integrity: references, team history, claim consistency
+- prior_venture_outcomes: prior company results, users, revenue, exit, or learning
 
 Evidence type guidance:
 - verified_outcome: externally verifiable metric or outcome in the document

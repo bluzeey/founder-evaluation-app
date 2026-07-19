@@ -25,23 +25,25 @@ class EvidenceStatus(str, Enum):
 
 
 class Dimension(str, Enum):
-    EXECUTION = "execution"
-    LEARNING = "learning"
-    CUSTOMER_SELLING = "customer_selling"
-    JUDGMENT = "judgment"
-    LEADERSHIP = "leadership"
-    OWNERSHIP = "ownership"
-    CLAIM_RELIABILITY = "claim_reliability"
+    EXECUTION_AND_SHIPPING = "execution_and_shipping"
+    TECHNICAL_OR_DOMAIN_ABILITY = "technical_or_domain_ability"
+    AGENCY_AND_INITIATIVE = "agency_and_initiative"
+    LEARNING_VELOCITY = "learning_velocity"
+    RESILIENCE_AND_PERSISTENCE = "resilience_and_persistence"
+    COMMERCIAL_RECRUITING_DISTRIBUTION_ABILITY = "commercial_recruiting_distribution_ability"
+    COLLABORATION_AND_INTEGRITY = "collaboration_and_integrity"
+    PRIOR_VENTURE_OUTCOMES = "prior_venture_outcomes"
 
 
 DIMENSION_WEIGHTS = {
-    Dimension.EXECUTION: 0.22,
-    Dimension.LEARNING: 0.16,
-    Dimension.CUSTOMER_SELLING: 0.16,
-    Dimension.JUDGMENT: 0.16,
-    Dimension.LEADERSHIP: 0.12,
-    Dimension.OWNERSHIP: 0.10,
-    Dimension.CLAIM_RELIABILITY: 0.08,
+    Dimension.EXECUTION_AND_SHIPPING: 0.20,
+    Dimension.TECHNICAL_OR_DOMAIN_ABILITY: 0.18,
+    Dimension.AGENCY_AND_INITIATIVE: 0.15,
+    Dimension.LEARNING_VELOCITY: 0.12,
+    Dimension.RESILIENCE_AND_PERSISTENCE: 0.10,
+    Dimension.COMMERCIAL_RECRUITING_DISTRIBUTION_ABILITY: 0.10,
+    Dimension.COLLABORATION_AND_INTEGRITY: 0.10,
+    Dimension.PRIOR_VENTURE_OUTCOMES: 0.05,
 }
 
 EVIDENCE_TYPE_STRENGTH = {

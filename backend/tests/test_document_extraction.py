@@ -68,7 +68,7 @@ def test_upload_deck_extracts_claims_and_evidence(mock_agent_cls, client):
         ],
         "evidence": [
             {
-                "dimension": "execution",
+                "dimension": "execution_and_shipping",
                 "observation": "Shipped product in 6 months",
                 "source_type": "pitch_deck",
                 "source_locator": "Slide 3: Product",

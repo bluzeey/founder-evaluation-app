@@ -585,13 +585,14 @@ def plan_assessment(founder_id: str, db: Session = Depends(get_db)):
         if b.unknown or b.confidence < 0.55
     ]
     module_map = {
-        Dimension.EXECUTION: AssessmentModule.PRIORITIZATION,
-        Dimension.LEARNING: AssessmentModule.BELIEF_UPDATING,
-        Dimension.CUSTOMER_SELLING: AssessmentModule.SALES_OBJECTION,
-        Dimension.JUDGMENT: AssessmentModule.PRIORITIZATION,
-        Dimension.LEADERSHIP: AssessmentModule.SCALING_LEADERSHIP,
-        Dimension.OWNERSHIP: AssessmentModule.SETBACK_OWNERSHIP,
-        Dimension.CLAIM_RELIABILITY: AssessmentModule.CLAIM_CALIBRATION,
+        Dimension.EXECUTION_AND_SHIPPING: AssessmentModule.ROLE_WORK_SAMPLE,
+        Dimension.TECHNICAL_OR_DOMAIN_ABILITY: AssessmentModule.CLAIM_CALIBRATION,
+        Dimension.AGENCY_AND_INITIATIVE: AssessmentModule.PRIORITIZATION,
+        Dimension.LEARNING_VELOCITY: AssessmentModule.BELIEF_UPDATING,
+        Dimension.RESILIENCE_AND_PERSISTENCE: AssessmentModule.SETBACK_OWNERSHIP,
+        Dimension.COMMERCIAL_RECRUITING_DISTRIBUTION_ABILITY: AssessmentModule.SALES_OBJECTION,
+        Dimension.COLLABORATION_AND_INTEGRITY: AssessmentModule.CLAIM_CALIBRATION,
+        Dimension.PRIOR_VENTURE_OUTCOMES: AssessmentModule.SCALING_LEADERSHIP,
     }
     selected = []
     for dim in low_dims:
@@ -637,16 +638,17 @@ def simulate_assessment(req: SimulateAssessmentRequest, db: Session = Depends(ge
     now = datetime.utcnow().isoformat()
     new_evidence = []
     module_dim_map = {
-        AssessmentModule.SALES_OBJECTION: Dimension.CUSTOMER_SELLING,
-        AssessmentModule.PRIORITIZATION: Dimension.JUDGMENT,
-        AssessmentModule.BELIEF_UPDATING: Dimension.LEARNING,
-        AssessmentModule.SCALING_LEADERSHIP: Dimension.LEADERSHIP,
-        AssessmentModule.SETBACK_OWNERSHIP: Dimension.OWNERSHIP,
-        AssessmentModule.CLAIM_CALIBRATION: Dimension.CLAIM_RELIABILITY,
+        AssessmentModule.ROLE_WORK_SAMPLE: Dimension.EXECUTION_AND_SHIPPING,
+        AssessmentModule.CLAIM_CALIBRATION: Dimension.COLLABORATION_AND_INTEGRITY,
+        AssessmentModule.PRIORITIZATION: Dimension.AGENCY_AND_INITIATIVE,
+        AssessmentModule.BELIEF_UPDATING: Dimension.LEARNING_VELOCITY,
+        AssessmentModule.SETBACK_OWNERSHIP: Dimension.RESILIENCE_AND_PERSISTENCE,
+        AssessmentModule.SALES_OBJECTION: Dimension.COMMERCIAL_RECRUITING_DISTRIBUTION_ABILITY,
+        AssessmentModule.SCALING_LEADERSHIP: Dimension.PRIOR_VENTURE_OUTCOMES,
     }
     # Demo: score each module response as strong (3) by default.
     for module, response in req.responses.items():
-        dim = module_dim_map.get(module, Dimension.EXECUTION)
+        dim = module_dim_map.get(module, Dimension.EXECUTION_AND_SHIPPING)
         item = EvidenceItem(
             id=f"ev_{uuid.uuid4().hex[:8]}",
             founder_id=req.founder_id,

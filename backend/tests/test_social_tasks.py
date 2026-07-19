@@ -55,7 +55,7 @@ def test_research_social_background_task_runs_and_scores(mock_agent_cls, db):
         ],
         "evidence": [
             {
-                "dimension": "execution",
+                "dimension": "execution_and_shipping",
                 "observation": "Shipped project x",
                 "source_type": "github",
                 "source_locator": "https://github.com/janedoe/x",
