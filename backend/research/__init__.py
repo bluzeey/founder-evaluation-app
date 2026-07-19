@@ -1,4 +1,4 @@
-from .umans_client import UmansClient
+from .openai_client import OpenAIClient
 from .social_agent import SocialAgent
 from .sourcing_agent import SourcingAgent
 from .document_agent import DocumentAgent
@@ -7,7 +7,7 @@ from .web_search import prepare_web_search
 from .extractor import evidence_from_llm, create_founder_from_research, create_social_background
 
 __all__ = [
-    "UmansClient",
+    "OpenAIClient",
     "SocialAgent",
     "SourcingAgent",
     "DocumentAgent",

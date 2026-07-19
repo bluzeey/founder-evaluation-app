@@ -151,31 +151,31 @@ CELERY_RESULT_BACKEND=redis://localhost:6379/0
 # throttled and deprioritized for unattended automation.
 UMANS_API_KEY=sk-your-umans-api-key
 
-UMANS_MODEL=umans-coder
-UMANS_SOCIAL_MODEL=umans-coder
-UMANS_DOCUMENT_MODEL=umans-coder
-# Use tavily to avoid Umans native web-search overload. Requires TAVILY_API_KEY.
-UMANS_WEBSEARCH_PROVIDER=tavily
-UMANS_RESEARCH_TIMEOUT=60
+OPENAI_API_KEY=sk-your-openai-api-key
+# gpt-4o is deprecated; use gpt-5.
+OPENAI_MODEL=gpt-5
+OPENAI_SOURCING_MODEL=gpt-5
+OPENAI_SOCIAL_MODEL=gpt-5
+OPENAI_DOCUMENT_MODEL=gpt-5
 
-# Tavily configuration (only needed when UMANS_WEBSEARCH_PROVIDER=tavily)
+# Tavily configuration
 TAVILY_API_KEY=tvly-your-tavily-api-key
 TAVILY_SEARCH_DEPTH=basic
 TAVILY_MAX_RESULTS=5
 
 # Per-agent web search toggles. Sourcing keeps web search for real-time
 # discovery; social research defaults to false because it already receives URLs.
-UMANS_ENABLE_WEB_SEARCH_SOURCING=true
-UMANS_ENABLE_WEB_SEARCH_SOCIAL=false
-UMANS_ENABLE_WEB_SEARCH_RESEARCH=true
+OPENAI_ENABLE_WEB_SEARCH_SOURCING=true
+OPENAI_ENABLE_WEB_SEARCH_SOCIAL=false
+OPENAI_ENABLE_WEB_SEARCH_RESEARCH=true
 
-# Global serialization lock: only one Umans request in flight at a time.
-UMANS_API_LOCK_DISABLED=false
-UMANS_API_LOCK_TTL_SECONDS=120
+# Global serialization lock: only one LLM request in flight at a time.
+API_LOCK_DISABLED=false
+API_LOCK_TTL_SECONDS=120
 
-# Circuit breaker pauses all Umans calls after repeated 429/5xx errors.
-UMANS_CIRCUIT_BREAKER_FAILURE_THRESHOLD=3
-UMANS_CIRCUIT_BREAKER_COOLDOWN_SECONDS=600
+# Circuit breaker pauses all LLM calls after repeated 429/5xx errors.
+CIRCUIT_BREAKER_FAILURE_THRESHOLD=3
+CIRCUIT_BREAKER_COOLDOWN_SECONDS=600
 
 SOURCING_DISPATCH_INTERVAL_SECONDS=60
 POOL_LOCK_TTL_SECONDS=300

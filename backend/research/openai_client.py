@@ -8,7 +8,7 @@ import httpx
 
 from .api_lock import api_lock, is_web_search_enabled
 from .http_utils import raise_for_status
-from .prompts import SOCIAL_RESEARCH_SYSTEM_PROMPT
+from .prompts import FOUNDER_RESEARCH_SYSTEM_PROMPT
 from .web_search import prepare_web_search
 
 logger = logging.getLogger(__name__)
@@ -18,8 +18,8 @@ OPENAI_BASE_URL = os.environ.get(
 )
 
 
-class SocialAgent:
-    """AI agent that researches a founder's LinkedIn/GitHub footprint."""
+class OpenAIClient:
+    """Client for the OpenAI chat completions endpoint."""
 
     def __init__(
         self,
@@ -31,36 +31,30 @@ class SocialAgent:
         if not self.api_key:
             raise RuntimeError("OPENAI_API_KEY is not set")
 
-        self.model = model or os.environ.get("OPENAI_SOCIAL_MODEL", "gpt-5")
+        self.model = model or os.environ.get("OPENAI_MODEL", "gpt-5")
         self.timeout = float(timeout or os.environ.get("OPENAI_TIMEOUT", "60"))
         self.max_tokens = int(os.environ.get("OPENAI_MAX_TOKENS", "8000"))
         self.enable_web_search = is_web_search_enabled(
-            "OPENAI_ENABLE_WEB_SEARCH_SOCIAL", "false"
+            "OPENAI_ENABLE_WEB_SEARCH_RESEARCH", "true"
         )
 
         logger.info(
-            "social_agent.configured model=%s timeout=%s max_tokens=%s web_search=%s",
+            "openai_client.configured model=%s timeout=%s max_tokens=%s web_search=%s",
             self.model,
             self.timeout,
             self.max_tokens,
             self.enable_web_search,
         )
 
-    def research(
-        self,
-        name: str,
-        linkedin_url: Optional[str],
-        github_url: Optional[str],
-    ) -> dict[str, Any]:
-        """Research a founder's social background.
+    def research(self, query: str, channels: List[str]) -> dict[str, Any]:
+        """Research a founder using Tavily-backed web search + OpenAI reasoning.
 
         Args:
-            name: Founder name.
-            linkedin_url: LinkedIn profile URL, if provided.
-            github_url: GitHub profile URL, if provided.
+            query: Free-text founder description (name, company, location, etc.).
+            channels: Channels to search, e.g. ["linkedin", "twitter", "github", "news"].
 
         Returns:
-            Parsed JSON dict with keys: summary, footprints, evidence.
+            Parsed JSON dict with keys: profile, summary, sources, evidence.
         """
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -68,24 +62,17 @@ class SocialAgent:
         }
 
         logger.info(
-            "social_agent.research.start name=%s has_linkedin=%s has_github=%s",
-            name,
-            bool(linkedin_url),
-            bool(github_url),
+            "openai_client.research.start query=%s channels=%s",
+            query,
+            channels,
         )
-        user_message = f"Research this founder's social footprint.\nName: {name}"
-        if linkedin_url:
-            user_message += f"\nLinkedIn: {linkedin_url}"
-        if github_url:
-            user_message += f"\nGitHub: {github_url}"
+        user_message = (
+            f"Research this founder across these channels: {', '.join(channels)}.\n\n"
+            f"Query: {query}"
+        )
 
-        search_query = f"{name} founder social footprint"
-        if linkedin_url:
-            search_query += f" linkedin {linkedin_url}"
-        if github_url:
-            search_query += f" github {github_url}"
-        web_search_context = prepare_web_search(
-            search_query, self.enable_web_search
+        web_search_context, _ = prepare_web_search(
+            query, self.enable_web_search
         )
         if web_search_context:
             user_message += f"\n\n{web_search_context}"
@@ -93,7 +80,7 @@ class SocialAgent:
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": SOCIAL_RESEARCH_SYSTEM_PROMPT},
+                {"role": "system", "content": FOUNDER_RESEARCH_SYSTEM_PROMPT},
                 {"role": "user", "content": user_message},
             ],
             "max_completion_tokens": self.max_tokens,
@@ -101,8 +88,8 @@ class SocialAgent:
 
         with httpx.Client(timeout=self.timeout) as client:
             logger.info(
-                "social_agent.research.request name=%s model=%s enable_web_search=%s",
-                name,
+                "openai_client.research.request query=%s model=%s enable_web_search=%s",
+                query,
                 self.model,
                 self.enable_web_search,
             )
@@ -112,13 +99,11 @@ class SocialAgent:
             data = response.json()
 
         parsed = self._parse_response(data)
-        evidence = parsed.get("evidence", []) or []
-        footprints = parsed.get("footprints", []) or []
         logger.info(
-            "social_agent.research.end name=%s footprints=%s evidence=%s",
-            name,
-            len(footprints),
-            len(evidence),
+            "openai_client.research.end query=%s profile_name=%s evidence=%s",
+            query,
+            parsed.get("profile", {}).get("name"),
+            len(parsed.get("evidence", []) or []),
         )
         return parsed
 
@@ -126,7 +111,7 @@ class SocialAgent:
         try:
             choice = data["choices"][0]
         except (KeyError, IndexError) as exc:
-            logger.error("social_agent.parse.unexpected_response data=%s", data)
+            logger.error("openai_client.parse.unexpected_response data=%s", data)
             raise ValueError(f"Unexpected OpenAI response shape: {data}") from exc
 
         message = choice.get("message", {})
@@ -139,14 +124,14 @@ class SocialAgent:
             content = content.strip()
 
         if not content:
-            logger.error("social_agent.parse.empty_content")
+            logger.error("openai_client.parse.empty_content")
             raise ValueError("OpenAI response contained no content")
 
         try:
             parsed = json.loads(content)
         except json.JSONDecodeError as exc:
-            logger.error("social_agent.parse.invalid_json content=%s", content)
+            logger.error("openai_client.parse.invalid_json content=%s", content)
             raise ValueError(f"OpenAI response was not valid JSON:\n{content}") from exc
 
-        logger.info("social_agent.parse.ok")
+        logger.info("openai_client.parse.ok")
         return parsed

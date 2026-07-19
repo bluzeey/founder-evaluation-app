@@ -1,9 +1,8 @@
 """Client for the Tavily search API.
 
-Used as an alternative to Umans native web search. Tavily fetches real-time
-search results, which are then injected into the prompt sent to Umans. This
-keeps the heavy search step off the Umans endpoint and avoids the native
-web-search overload errors.
+Tavily fetches real-time search results, which are then injected into the
+prompt sent to OpenAI. This keeps the heavy search step separate from the LLM
+endpoint and avoids provider-specific web-search overload errors.
 """
 import logging
 import os

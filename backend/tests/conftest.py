@@ -5,7 +5,7 @@ from pathlib import Path
 # Use the test database for all tests. Must be set before any backend module is imported.
 os.environ["DATABASE_URL"] = "postgresql+psycopg2://postgres:founderos@localhost:5433/founderos_test"
 os.environ["CELERY_ALWAYS_EAGER"] = "true"
-os.environ["UMANS_API_KEY"] = "test-key"
+os.environ["OPENAI_API_KEY"] = "test-key"
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 

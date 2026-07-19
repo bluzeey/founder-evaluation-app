@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 os.environ["CELERY_ALWAYS_EAGER"] = "true"
-os.environ["UMANS_API_KEY"] = "test-key"
+os.environ["OPENAI_API_KEY"] = "test-key"
 
 from main import app
 

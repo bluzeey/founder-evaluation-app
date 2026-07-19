@@ -2,7 +2,6 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-import httpx
 
 from research.tavily_client import TavilyClient
 from research.web_search import prepare_web_search
@@ -63,20 +62,9 @@ def test_tavily_client_format_results_empty():
     assert "No web search results" in formatted
 
 
-def test_prepare_web_search_native_uses_tools():
-    context, use_native_tools = prepare_web_search(
-        "AI founders", "native", enabled=True
-    )
-    assert context is None
-    assert use_native_tools is True
-
-
 def test_prepare_web_search_disabled():
-    context, use_native_tools = prepare_web_search(
-        "AI founders", "native", enabled=False
-    )
+    context = prepare_web_search("AI founders", enabled=False)
     assert context is None
-    assert use_native_tools is False
 
 
 @patch("research.web_search.TavilyClient")
@@ -91,11 +79,8 @@ def test_prepare_web_search_tavily_returns_context(mock_tavily_cls):
     mock_tavily_cls.return_value = mock_client
     mock_tavily_cls.format_results.return_value = "formatted Result context"
 
-    context, use_native_tools = prepare_web_search(
-        "AI founders", "tavily", enabled=True
-    )
+    context = prepare_web_search("AI founders", enabled=True)
     assert context == "formatted Result context"
-    assert use_native_tools is False
     mock_client.search.assert_called_once()
 
 
@@ -105,9 +90,6 @@ def test_prepare_web_search_tavily_degrades_on_failure(mock_tavily_cls):
     mock_client.search.side_effect = RuntimeError("tavily down")
     mock_tavily_cls.return_value = mock_client
 
-    context, use_native_tools = prepare_web_search(
-        "AI founders", "tavily", enabled=True
-    )
+    context = prepare_web_search("AI founders", enabled=True)
     assert context is not None
     assert "unavailable" in context
-    assert use_native_tools is False

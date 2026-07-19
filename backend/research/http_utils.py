@@ -1,10 +1,10 @@
-"""Shared HTTP utilities for research agents calling the Umans API."""
+"""Shared HTTP utilities for research agents calling external LLM APIs."""
 import logging
 from typing import Any
 
 import httpx
 
-from .umans_lock import record_umans_failure, record_umans_success
+from .api_lock import record_api_failure, record_api_success
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +39,9 @@ def raise_for_status(response: httpx.Response) -> None:
     """
     try:
         response.raise_for_status()
-        record_umans_success()
+        record_api_success()
     except httpx.HTTPStatusError as exc:
         log_http_error(response)
         if is_retryable_status(response.status_code):
-            record_umans_failure()
+            record_api_failure()
         raise

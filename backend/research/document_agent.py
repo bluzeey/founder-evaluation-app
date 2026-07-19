@@ -6,13 +6,15 @@ from typing import Any, List, Optional
 
 import httpx
 
+from .api_lock import api_lock
 from .http_utils import raise_for_status
 from .prompts import DOCUMENT_EXTRACTION_SYSTEM_PROMPT
-from .umans_lock import umans_api_lock
 
 logger = logging.getLogger(__name__)
 
-UMANS_BASE_URL = "https://api.code.umans.ai/v1/chat/completions"
+OPENAI_BASE_URL = os.environ.get(
+    "OPENAI_BASE_URL", "https://api.openai.com/v1/chat/completions"
+)
 
 
 class DocumentAgent:
@@ -24,13 +26,13 @@ class DocumentAgent:
         model: Optional[str] = None,
         timeout: Optional[float] = None,
     ):
-        self.api_key = api_key or os.environ.get("UMANS_API_KEY")
+        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
         if not self.api_key:
-            raise RuntimeError("UMANS_API_KEY is not set")
+            raise RuntimeError("OPENAI_API_KEY is not set")
 
-        self.model = model or os.environ.get("UMANS_DOCUMENT_MODEL", "umans-coder")
-        self.timeout = float(timeout or os.environ.get("UMANS_RESEARCH_TIMEOUT", "120"))
-        self.max_tokens = int(os.environ.get("UMANS_MAX_TOKENS", "8000"))
+        self.model = model or os.environ.get("OPENAI_DOCUMENT_MODEL", "gpt-5")
+        self.timeout = float(timeout or os.environ.get("OPENAI_TIMEOUT", "120"))
+        self.max_tokens = int(os.environ.get("OPENAI_MAX_TOKENS", "8000"))
 
         logger.info(
             "document_agent.configured model=%s timeout=%s max_tokens=%s",
@@ -81,8 +83,8 @@ class DocumentAgent:
 
         with httpx.Client(timeout=self.timeout) as client:
             logger.info("document_agent.extract.request model=%s", self.model)
-            with umans_api_lock():
-                response = client.post(UMANS_BASE_URL, headers=headers, json=payload)
+            with api_lock():
+                response = client.post(OPENAI_BASE_URL, headers=headers, json=payload)
             raise_for_status(response)
             data = response.json()
 
@@ -99,7 +101,7 @@ class DocumentAgent:
             choice = data["choices"][0]
         except (KeyError, IndexError) as exc:
             logger.error("document_agent.extract.unexpected_response data=%s", data)
-            raise ValueError(f"Unexpected Umans response shape: {data}") from exc
+            raise ValueError(f"Unexpected OpenAI response shape: {data}") from exc
 
         message = choice.get("message", {})
         content = message.get("content", "")
@@ -112,13 +114,13 @@ class DocumentAgent:
 
         if not content:
             logger.error("document_agent.extract.empty_content")
-            raise ValueError("Umans response contained no content")
+            raise ValueError("OpenAI response contained no content")
 
         try:
             parsed = json.loads(content)
         except json.JSONDecodeError as exc:
             logger.error("document_agent.extract.invalid_json content=%s", content)
-            raise ValueError(f"Umans response was not valid JSON:\n{content}") from exc
+            raise ValueError(f"OpenAI response was not valid JSON:\n{content}") from exc
 
         return {
             "profile": parsed.get("profile", {}) or {},

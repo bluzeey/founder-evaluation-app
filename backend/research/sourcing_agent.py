@@ -6,14 +6,16 @@ from typing import Any, List, Optional
 
 import httpx
 
+from .api_lock import api_lock, is_web_search_enabled
 from .http_utils import raise_for_status
 from .prompts import SOURCING_SYSTEM_PROMPT
-from .umans_lock import is_web_search_enabled, umans_api_lock
 from .web_search import prepare_web_search
 
 logger = logging.getLogger(__name__)
 
-UMANS_BASE_URL = "https://api.code.umans.ai/v1/chat/completions"
+OPENAI_BASE_URL = os.environ.get(
+    "OPENAI_BASE_URL", "https://api.openai.com/v1/chat/completions"
+)
 
 
 class SourcingAgent:
@@ -22,28 +24,22 @@ class SourcingAgent:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        websearch_provider: Optional[str] = None,
         model: Optional[str] = None,
         timeout: Optional[float] = None,
     ):
-        self.api_key = api_key or os.environ.get("UMANS_API_KEY")
+        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
         if not self.api_key:
-            raise RuntimeError("UMANS_API_KEY is not set")
+            raise RuntimeError("OPENAI_API_KEY is not set")
 
-        # Always use native web search unless explicitly overridden.
-        self.websearch_provider = websearch_provider or os.environ.get(
-            "UMANS_WEBSEARCH_PROVIDER", "native"
-        )
-        self.model = model or os.environ.get("UMANS_SOURCING_MODEL", "umans-coder")
-        self.timeout = float(timeout or os.environ.get("UMANS_RESEARCH_TIMEOUT", "60"))
-        self.max_tokens = int(os.environ.get("UMANS_MAX_TOKENS", "8000"))
+        self.model = model or os.environ.get("OPENAI_SOURCING_MODEL", "gpt-5")
+        self.timeout = float(timeout or os.environ.get("OPENAI_TIMEOUT", "60"))
+        self.max_tokens = int(os.environ.get("OPENAI_MAX_TOKENS", "8000"))
         self.enable_web_search = is_web_search_enabled(
-            "UMANS_ENABLE_WEB_SEARCH_SOURCING", "true"
+            "OPENAI_ENABLE_WEB_SEARCH_SOURCING", "true"
         )
 
         logger.info(
-            "sourcing_agent.configured provider=%s model=%s timeout=%s max_tokens=%s web_search=%s",
-            self.websearch_provider,
+            "sourcing_agent.configured model=%s timeout=%s max_tokens=%s web_search=%s",
             self.model,
             self.timeout,
             self.max_tokens,
@@ -82,7 +78,6 @@ class SourcingAgent:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "X-Umans-Websearch-Provider": self.websearch_provider,
         }
 
         source_lines = []
@@ -110,8 +105,8 @@ class SourcingAgent:
             f"Interesting pre-seed/seed startup founders in {', '.join(geographies)} "
             f"working on {search_keywords}"
         )
-        web_search_context, use_native_tools = prepare_web_search(
-            search_query, self.websearch_provider, self.enable_web_search
+        web_search_context = prepare_web_search(
+            search_query, self.enable_web_search
         )
         if web_search_context:
             user_message += f"\n\n{web_search_context}"
@@ -124,19 +119,15 @@ class SourcingAgent:
             ],
             "max_completion_tokens": self.max_tokens,
         }
-        if use_native_tools:
-            payload["tools"] = [{"type": "web_search"}]
 
         with httpx.Client(timeout=self.timeout) as client:
             logger.info(
-                "sourcing_agent.discover.request provider=%s model=%s enable_web_search=%s native_tools=%s",
-                self.websearch_provider,
+                "sourcing_agent.discover.request model=%s enable_web_search=%s",
                 self.model,
                 self.enable_web_search,
-                use_native_tools,
             )
-            with umans_api_lock():
-                response = client.post(UMANS_BASE_URL, headers=headers, json=payload)
+            with api_lock():
+                response = client.post(OPENAI_BASE_URL, headers=headers, json=payload)
             raise_for_status(response)
             data = response.json()
 
@@ -153,7 +144,7 @@ class SourcingAgent:
             choice = data["choices"][0]
         except (KeyError, IndexError) as exc:
             logger.error("sourcing_agent.discover.unexpected_response data=%s", data)
-            raise ValueError(f"Unexpected Umans response shape: {data}") from exc
+            raise ValueError(f"Unexpected OpenAI response shape: {data}") from exc
 
         message = choice.get("message", {})
         content = message.get("content", "")
@@ -166,13 +157,13 @@ class SourcingAgent:
 
         if not content:
             logger.error("sourcing_agent.discover.empty_content")
-            raise ValueError("Umans response contained no content")
+            raise ValueError("OpenAI response contained no content")
 
         try:
             parsed = json.loads(content)
         except json.JSONDecodeError as exc:
             logger.error("sourcing_agent.discover.invalid_json content=%s", content)
-            raise ValueError(f"Umans response was not valid JSON:\n{content}") from exc
+            raise ValueError(f"OpenAI response was not valid JSON:\n{content}") from exc
 
         self._validate_recommendations(parsed)
         return parsed

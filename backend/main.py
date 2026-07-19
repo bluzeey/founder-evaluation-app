@@ -42,7 +42,7 @@ from models import (
     SourceConfig,
 )
 from scoring import calculate_founder_score
-from research import UmansClient, create_founder_from_research, evidence_from_llm
+from research import OpenAIClient, create_founder_from_research, evidence_from_llm
 from tasks.social_research import (
     research_social_background,
     load_social_background,
@@ -341,10 +341,10 @@ def dismiss_pool_item(item_id: str, db: Session = Depends(get_db)):
 
 @app.post("/v1/founders/research", response_model=Founder)
 def research_founder(req: ResearchFounderRequest, db: Session = Depends(get_db)):
-    """Research a founder with Umans AI web search and create a scored profile."""
+    """Research a founder with Tavily-backed web search + OpenAI and create a scored profile."""
     logger.info("endpoint.research_founder.start query=%s channels=%s", req.query, req.channels)
     try:
-        client = UmansClient()
+        client = OpenAIClient()
     except RuntimeError as exc:
         logger.error("endpoint.research_founder.config_error error=%s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
