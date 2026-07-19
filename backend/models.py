@@ -155,6 +155,7 @@ class OpportunityScreen(BaseModel):
     idea_vs_market_posture: str = "neutral"
     idea_vs_market_confidence: float = 0.0
     next_founder_action: Optional[str] = None
+    status: str = "SCREENING"
 
 
 class TrustStatus(str, Enum):

@@ -157,6 +157,7 @@ class Opportunity(Base):
     idea_vs_market_posture: Mapped[str] = mapped_column(String, nullable=False, default="neutral")
     idea_vs_market_confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0)
     next_founder_action: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="SCREENING", index=True)
 
     founder: Mapped["Founder"] = relationship()
 

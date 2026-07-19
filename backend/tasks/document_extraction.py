@@ -122,7 +122,13 @@ def extract_document(
                 db_opp.founder_confidence = snapshot.overall_confidence
             db.commit()
 
-            # Fill remaining unknown/low-confidence dimensions with AI estimates.
+        # Always fill remaining unknown/low-confidence dimensions with AI estimates
+        # when we have a founder. This covers the common case where the LLM
+        # returned claims but no direct evidence array, as well as dimensions
+        # that the direct evidence did not cover. estimate_founder_scores gates
+        # internally on evidence count + confidence, so this is safe to call
+        # even when evidence_items was non-empty above.
+        if founder_id:
             estimate_founder_scores(founder_id, db=db)
 
         # Optionally update founder profile if founder_id is provided.

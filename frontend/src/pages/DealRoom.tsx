@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { AlertTriangle, ArrowLeft, Github, Linkedin, Loader2, Upload } from "lucide-react";
 import { CaseStatusBadge } from "@/components/StatusBadge";
@@ -21,6 +21,8 @@ export default function DealRoom() {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [estimating, setEstimating] = useState(false);
+  const estimateTriggeredRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!caseId) return;
@@ -39,6 +41,20 @@ export default function DealRoom() {
         if (cancelled) return;
         if (f) setFounder(f);
         setSnapshot(snap);
+
+        // Auto-trigger AI estimation when the founder is at cold-start
+        // (0% confidence, all dimensions unknown). The estimate runs async
+        // via Celery; a separate effect polls the score until it updates.
+        const isColdStart = snap.overall_confidence <= 0;
+        if (isColdStart && f && estimateTriggeredRef.current !== f.id) {
+          estimateTriggeredRef.current = f.id;
+          try {
+            await api.founders.estimate(f.id);
+            if (!cancelled) setEstimating(true);
+          } catch {
+            // ignore — the backend may also auto-queue from the diligence endpoint
+          }
+        }
       } catch (err) {
         if (!cancelled) setError((err as ApiError).message || "Case not found");
       } finally {
@@ -59,6 +75,42 @@ export default function DealRoom() {
       clearInterval(interval);
     };
   }, [caseId]);
+
+  // Poll the founder score while an AI estimate is running. Stops once the
+  // confidence rises above 0 (estimate landed) or after ~60s (timeout).
+  useEffect(() => {
+    if (!estimating || !founder || !caseId) return;
+    let cancelled = false;
+    const startedAt = Date.now();
+    const poll = setInterval(async () => {
+      if (cancelled) return;
+      if (Date.now() - startedAt > 60000) {
+        setEstimating(false);
+        return;
+      }
+      try {
+        const snap = await api.founders.score(founder.id);
+        if (cancelled) return;
+        setSnapshot(snap);
+        if (snap.overall_confidence > 0) {
+          setEstimating(false);
+          // Refresh the opportunity so the header score/confidence sync.
+          try {
+            const opp = await api.opportunities.get(caseId);
+            if (!cancelled) setOpportunity(opp);
+          } catch {
+            // ignore
+          }
+        }
+      } catch {
+        // ignore polling errors
+      }
+    }, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(poll);
+    };
+  }, [estimating, founder, caseId]);
 
   if (loading && !opportunity) {
     return (
@@ -89,6 +141,7 @@ export default function DealRoom() {
       claims={claims}
       uploading={uploading}
       setUploading={setUploading}
+      estimating={estimating}
     />
   );
 }
@@ -167,6 +220,7 @@ function LiveOpportunityView({
   claims,
   uploading,
   setUploading,
+  estimating,
 }: {
   opportunity: BackendOpportunity;
   founder: BackendFounder | null;
@@ -174,6 +228,7 @@ function LiveOpportunityView({
   claims: BackendClaim[];
   uploading: boolean;
   setUploading: (v: boolean) => void;
+  estimating: boolean;
 }) {
   const [uploadError, setUploadError] = useState<string | null>(null);
 
@@ -274,7 +329,14 @@ function LiveOpportunityView({
       </div>
 
       <div className="panel space-y-4">
-        <h3 className="font-display text-lg font-semibold text-ink">Founder score breakdown</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="font-display text-lg font-semibold text-ink">Founder score breakdown</h3>
+          {estimating && (
+            <span className="inline-flex items-center gap-1.5 rounded-sm border border-action/30 bg-action/10 px-2 py-1 text-xs font-mono font-medium text-action">
+              <Loader2 size={12} className="animate-spin" /> Estimating score…
+            </span>
+          )}
+        </div>
         {snapshot ? (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {snapshot.dimension_breakdowns.map((bd) => (

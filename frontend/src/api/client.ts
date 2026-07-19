@@ -102,6 +102,7 @@ export const api = {
     list: () => get<BackendFounder[]>("/v1/founders"),
     get: (id: string) => get<BackendFounder>(`/v1/founders/${id}`),
     score: (id: string) => get<BackendScoreSnapshot>(`/v1/founders/${id}/score`),
+    estimate: (id: string) => post<QueuedResponse>(`/v1/founders/${id}/estimate`),
     create: (req: CreateFounderRequest) => post<BackendFounder>("/v1/founders", req),
   },
 

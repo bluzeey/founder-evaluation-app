@@ -35,7 +35,12 @@ app.conf.update(
     },
 )
 
-app.conf.imports = ("tasks.social_research", "tasks.founder_pool", "tasks.document_extraction")
+app.conf.imports = (
+    "tasks.social_research",
+    "tasks.founder_pool",
+    "tasks.document_extraction",
+    "tasks.estimation_task",
+)
 
 logger.info(
     "celery_app.configured broker=%s backend=%s dispatch_interval_seconds=%s always_eager=%s",

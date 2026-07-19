@@ -479,6 +479,7 @@ def opportunity_to_db(opp: OpportunityScreen) -> db_models.Opportunity:
         idea_vs_market_posture=opp.idea_vs_market_posture,
         idea_vs_market_confidence=opp.idea_vs_market_confidence,
         next_founder_action=opp.next_founder_action,
+        status=opp.status,
     )
 
 
@@ -497,6 +498,7 @@ def opportunity_to_pydantic(db_opp: db_models.Opportunity) -> OpportunityScreen:
         idea_vs_market_posture=db_opp.idea_vs_market_posture,
         idea_vs_market_confidence=db_opp.idea_vs_market_confidence,
         next_founder_action=db_opp.next_founder_action,
+        status=db_opp.status,
     )
 
 
@@ -513,9 +515,21 @@ def create_or_update_opportunity(db: Session, opp: OpportunityScreen) -> db_mode
         db_opp.idea_vs_market_posture = opp.idea_vs_market_posture
         db_opp.idea_vs_market_confidence = opp.idea_vs_market_confidence
         db_opp.next_founder_action = opp.next_founder_action
+        # Preserve the persisted case status; status is managed via the
+        # dedicated status endpoint, not via opportunity screen updates.
     else:
         db_opp = opportunity_to_db(opp)
         db.add(db_opp)
+    db.commit()
+    db.refresh(db_opp)
+    return db_opp
+
+
+def update_opportunity_status(db: Session, opportunity_id: str, status: str) -> Optional[db_models.Opportunity]:
+    db_opp = get_opportunity(db, opportunity_id)
+    if not db_opp:
+        return None
+    db_opp.status = status
     db.commit()
     db.refresh(db_opp)
     return db_opp
@@ -525,10 +539,16 @@ def get_opportunity(db: Session, opportunity_id: str) -> Optional[db_models.Oppo
     return db.query(db_models.Opportunity).filter(db_models.Opportunity.id == opportunity_id).first()
 
 
-def list_opportunities(db: Session, founder_id: Optional[str] = None) -> List[db_models.Opportunity]:
+def list_opportunities(
+    db: Session,
+    founder_id: Optional[str] = None,
+    status: Optional[str] = None,
+) -> List[db_models.Opportunity]:
     query = db.query(db_models.Opportunity)
     if founder_id:
         query = query.filter(db_models.Opportunity.founder_id == founder_id)
+    if status:
+        query = query.filter(db_models.Opportunity.status == status)
     return query.order_by(db_models.Opportunity.id).all()
 
 

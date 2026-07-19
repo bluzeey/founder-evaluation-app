@@ -57,6 +57,7 @@ from tasks.founder_pool import (
     create_founder_and_opportunity_from_pool_item,
 )
 from tasks.document_extraction import extract_document
+from tasks.estimation_task import run_estimate
 
 app = FastAPI(title="FounderOS API", version="0.1.0")
 
@@ -100,6 +101,25 @@ class UpdateThesisRequest(BaseModel):
     check_size_max: Optional[float] = None
     risk_appetite: Optional[str] = None
     min_evidence_requirements: Optional[Dict[str, Any]] = None
+
+
+VALID_CASE_STATUSES = {
+    "DISCOVERED",
+    "ACTIVATION_READY",
+    "AWAITING_APPLICATION",
+    "SCREENING",
+    "DILIGENCE",
+    "VALIDATION_HOLD",
+    "ASSOCIATE_REVIEW",
+    "PARTNER_REVIEW",
+    "INVESTED",
+    "DECLINED",
+    "MONITORING",
+}
+
+
+class UpdateOpportunityStatusRequest(BaseModel):
+    status: str
 
 
 class AddEvidenceRequest(BaseModel):
@@ -512,6 +532,29 @@ def get_score(founder_id: str, db: Session = Depends(get_db)):
     return crud.score_snapshot_to_pydantic(db_snapshot)
 
 
+@app.post("/v1/founders/{founder_id}/estimate")
+def estimate_founder(founder_id: str, db: Session = Depends(get_db)):
+    """Queue an AI estimation pass that derives evidence from claims + research summaries.
+
+    Used by the UI to recover a cold-start founder (0% confidence, all dimensions
+    unknown) into a real score breakdown. Runs asynchronously via Celery; poll
+    GET /v1/founders/{founder_id}/score until the confidence rises above 0.
+    """
+    logger.info("endpoint.estimate_founder.start founder_id=%s", founder_id)
+    db_founder = crud.get_founder(db, founder_id)
+    if not db_founder:
+        logger.warning("endpoint.estimate_founder.not_found founder_id=%s", founder_id)
+        raise HTTPException(status_code=404, detail="Founder not found")
+
+    task = run_estimate.delay(founder_id)
+    logger.info(
+        "endpoint.estimate_founder.queued founder_id=%s task_id=%s",
+        founder_id,
+        task.id,
+    )
+    return {"task_id": task.id, "status": "queued"}
+
+
 @app.get("/v1/founders/{founder_id}/history", response_model=List[ScoreSnapshot])
 def get_history(founder_id: str, db: Session = Depends(get_db)):
     db_founder = crud.get_founder(db, founder_id)
@@ -804,9 +847,18 @@ def screen_opportunity(
 
 
 @app.get("/v1/opportunities", response_model=List[OpportunityScreen])
-def list_opportunities(db: Session = Depends(get_db)):
-    db_opps = crud.list_opportunities(db)
-    logger.info("endpoint.list_opportunities count=%s", len(db_opps))
+def list_opportunities(
+    founder_id: Optional[str] = None,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    db_opps = crud.list_opportunities(db, founder_id=founder_id, status=status)
+    logger.info(
+        "endpoint.list_opportunities count=%s founder_id=%s status=%s",
+        len(db_opps),
+        founder_id,
+        status,
+    )
     return [crud.opportunity_to_pydantic(o) for o in db_opps]
 
 
@@ -821,15 +873,52 @@ def get_opportunity_screen(opportunity_id: str, db: Session = Depends(get_db)):
     return crud.opportunity_to_pydantic(db_opp)
 
 
+@app.patch("/v1/opportunities/{opportunity_id}/status", response_model=OpportunityScreen)
+def update_opportunity_status(
+    opportunity_id: str,
+    req: UpdateOpportunityStatusRequest,
+    db: Session = Depends(get_db),
+):
+    """Update the pipeline status of a case (e.g. move to decision queue)."""
+    logger.info(
+        "endpoint.update_opportunity_status.start opportunity_id=%s status=%s",
+        opportunity_id,
+        req.status,
+    )
+    if req.status not in VALID_CASE_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid status: {req.status}")
+
+    db_opp = crud.update_opportunity_status(db, opportunity_id, req.status)
+    if not db_opp:
+        logger.warning(
+            "endpoint.update_opportunity_status.not_found opportunity_id=%s",
+            opportunity_id,
+        )
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+    logger.info(
+        "endpoint.update_opportunity_status.end opportunity_id=%s status=%s",
+        opportunity_id,
+        db_opp.status,
+    )
+    return crud.opportunity_to_pydantic(db_opp)
+
+
 @app.get("/v1/opportunities/{opportunity_id}/diligence", response_model=List[Claim])
 def get_diligence(opportunity_id: str, db: Session = Depends(get_db)):
     logger.info("endpoint.get_diligence.start opportunity_id=%s", opportunity_id)
     claims = crud.list_claims_for_opportunity(db, opportunity_id)
+
+    # Resolve the founder for this opportunity so claims (and any estimation
+    # trigger) can be attributed correctly.
+    db_opp = crud.get_opportunity(db, opportunity_id)
+    founder_id = db_opp.founder_id if db_opp else None
+
     if not claims:
         claims = [
             Claim(
                 id=f"clm_{uuid.uuid4().hex[:8]}",
                 opportunity_id=opportunity_id,
+                founder_id=founder_id,
                 claim="₹20 lakh ARR",
                 source="Pitch deck slide 8",
                 trust_status=TrustStatus.FOUNDER_REPORTED,
@@ -841,6 +930,7 @@ def get_diligence(opportunity_id: str, db: Session = Depends(get_db)):
             Claim(
                 id=f"clm_{uuid.uuid4().hex[:8]}",
                 opportunity_id=opportunity_id,
+                founder_id=founder_id,
                 claim="15 active customers",
                 source="Application form",
                 trust_status=TrustStatus.SUPPORTED,
@@ -849,6 +939,27 @@ def get_diligence(opportunity_id: str, db: Session = Depends(get_db)):
             ),
         ]
         crud.create_claims(db, claims)
+
+    # If the founder is still at cold-start, queue an AI estimate so the
+    # score breakdown populates from the claims + source signal. Non-blocking.
+    if founder_id:
+        db_founder = crud.get_founder(db, founder_id)
+        if db_founder:
+            snapshot = (
+                crud.score_snapshot_to_pydantic(snap)
+                if db_founder.latest_score_snapshot_id
+                and (snap := crud.get_score_snapshot(db, db_founder.latest_score_snapshot_id))
+                else None
+            )
+            cold_start = (snapshot is None) or (snapshot.overall_confidence <= 0.0)
+            if cold_start:
+                task = run_estimate.delay(founder_id)
+                logger.info(
+                    "endpoint.get_diligence.cold_start_estimate_queued founder_id=%s task_id=%s",
+                    founder_id,
+                    task.id,
+                )
+
     logger.info(
         "endpoint.get_diligence.end opportunity_id=%s claim_count=%s",
         opportunity_id,
