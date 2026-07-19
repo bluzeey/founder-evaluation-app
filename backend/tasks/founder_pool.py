@@ -339,9 +339,6 @@ def refresh_founder_pool(
             )
 
         if new_items:
-            db.query(db_models.FounderPoolItem).filter(
-                db_models.FounderPoolItem.status == PoolItemStatus.RECOMMENDED.value
-            ).delete(synchronize_session=False)
             crud.create_pool_items(db, new_items)
 
             # Every sourced lead becomes a founder case with a cold-start score.
