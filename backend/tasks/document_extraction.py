@@ -10,7 +10,11 @@ from document_extractor import extract_text
 from models import Claim, EvidenceItem, Founder, SourcingJob, TrustStatus
 from research import DocumentAgent
 from research.extractor import create_founder_from_research, evidence_from_llm
-from tasks.retry_utils import DOCUMENT_MAX_RETRIES, DOCUMENT_RETRY_BASE_DELAY, maybe_retry
+from tasks.retry_utils import (
+    DOCUMENT_MAX_RETRIES,
+    DOCUMENT_RETRY_BASE_DELAY,
+    maybe_retry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +71,7 @@ def extract_document(
             result = agent.extract(text, filename=filename)
         except Exception as exc:
             logger.error("document_extraction.task.error error=%s", exc)
-            maybe_retry(self, exc)
+            maybe_retry(self, exc, base_delay=DOCUMENT_RETRY_BASE_DELAY)
 
         # Create claims from extracted data.
         raw_claims = result.get("claims", []) or []
