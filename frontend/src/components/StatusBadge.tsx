@@ -17,7 +17,7 @@ const statusStyles: Record<CaseStatus, string> = {
 
 export function CaseStatusBadge({ status }: { status: CaseStatus }) {
   return (
-    <span className={`rounded-sm border px-2 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wide ${statusStyles[status]}`}>
+    <span className={`whitespace-nowrap rounded-sm border px-2 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wide ${statusStyles[status]}`}>
       {statusLabel(status)}
     </span>
   );

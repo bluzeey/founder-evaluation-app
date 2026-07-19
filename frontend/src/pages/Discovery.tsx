@@ -1,6 +1,6 @@
-import { useState, useMemo } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { Search, Filter, UserPlus, Eye, Mail, Activity } from "lucide-react";
+import { Search, Filter, MoreHorizontal, UserPlus, Eye, Mail, Activity, ChevronDown } from "lucide-react";
 import { DEMO_CASES, TALENT_SIGNALS, getDemoPerson, getDemoCompany } from "@/data/demoCases";
 import { useApp } from "@/store/appContext";
 import { CaseStatusBadge } from "@/components/StatusBadge";
@@ -26,10 +26,23 @@ export default function Discovery() {
   const { setCaseOverride } = useApp();
   const [query, setQuery] = useState("");
   const [source, setSource] = useState("All");
-  const [tag, setTag] = useState("All");
   const [status, setStatus] = useState("All");
   const [dimension, setDimension] = useState("All");
+  const [tag, setTag] = useState("All");
   const [minConfidence, setMinConfidence] = useState(0);
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
+  const [openActionId, setOpenActionId] = useState<string | null>(null);
+  const actionRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (actionRef.current && !actionRef.current.contains(e.target as Node)) {
+        setOpenActionId(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const rows = useMemo(() => {
     const talentRows: TalentSignal[] = TALENT_SIGNALS;
@@ -71,12 +84,20 @@ export default function Discovery() {
     return combined;
   }, [query, source, tag, status, dimension, minConfidence]);
 
+  const activeFilters = [
+    source !== "All" && { label: source, onRemove: () => setSource("All") },
+    status !== "All" && { label: status, onRemove: () => setStatus("All") },
+    dimension !== "All" && { label: dimension, onRemove: () => setDimension("All") },
+    tag !== "All" && { label: tag, onRemove: () => setTag("All") },
+    minConfidence > 0 && { label: `≥${Math.round(minConfidence * 100)}% conf`, onRemove: () => setMinConfidence(0) },
+  ].filter(Boolean) as { label: string; onRemove: () => void }[];
+
   const activateTalent = (caseId: string) => {
     setCaseOverride(caseId, { status: "SCREENING", nextAction: "Activated from Discovery. Schedule shared screening call within 24h." });
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="label mb-1">Discovery Inbox</div>
@@ -88,12 +109,13 @@ export default function Discovery() {
         </div>
       </div>
 
-      <div className="panel space-y-4 border-manila-dark/30 bg-manila/20">
+      {/* Filters */}
+      <div className="panel space-y-3 border-manila-dark/30 bg-manila/20">
         <div className="flex items-center gap-2 text-sm font-semibold text-ink">
           <Filter size={16} /> Filters
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
-          <div className="flex items-center gap-2 rounded-sm border border-concrete/30 bg-paper px-3 py-2">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+          <div className="flex flex-1 items-center gap-2 rounded-sm border border-concrete/30 bg-paper px-3 py-2">
             <Search size={16} className="text-concrete" />
             <input
               className="flex-1 bg-transparent text-sm font-sans outline-none"
@@ -102,111 +124,191 @@ export default function Discovery() {
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
-          <FilterSelect value={source} onChange={setSource} options={["All", ...SOURCE_OPTIONS]} label="Source" />
-          <FilterSelect value={tag} onChange={setTag} options={["All", ...TAG_OPTIONS]} label="Thesis tag" />
-          <FilterSelect value={status} onChange={setStatus} options={["All", ...STATUS_OPTIONS]} label="Status" />
-          <FilterSelect value={dimension} onChange={setDimension} options={["All", ...DIM_OPTIONS]} label="Signal dimension" />
-          <div>
-            <label className="label mb-1 block">Min confidence</label>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              value={Math.round(minConfidence * 100)}
-              onChange={(e) => setMinConfidence(Number(e.target.value) / 100)}
-              className="w-full"
-            />
-            <div className="font-mono text-xs text-concrete">{Math.round(minConfidence * 100)}%</div>
+          <div className="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-3 lg:flex-none lg:grid-cols-3">
+            <FilterSelect value={source} onChange={setSource} options={["All", ...SOURCE_OPTIONS]} label="Source" />
+            <FilterSelect value={status} onChange={setStatus} options={["All", ...STATUS_OPTIONS]} label="Status" />
+            <FilterSelect value={dimension} onChange={setDimension} options={["All", ...DIM_OPTIONS]} label="Signal" />
           </div>
+          <button
+            onClick={() => setShowMoreFilters((s) => !s)}
+            className="flex items-center gap-1 rounded-sm border border-concrete/30 bg-paper px-3 py-2 text-sm font-sans font-medium text-ink hover:bg-manila/40"
+          >
+            More <ChevronDown size={14} className={`transition-transform ${showMoreFilters ? "rotate-180" : ""}`} />
+          </button>
         </div>
+
+        {showMoreFilters && (
+          <div className="grid grid-cols-1 gap-3 border-t border-concrete/20 pt-3 sm:grid-cols-2 lg:grid-cols-3">
+            <FilterSelect value={tag} onChange={setTag} options={["All", ...TAG_OPTIONS]} label="Thesis tag" />
+            <div>
+              <label className="label mb-1 block">Min confidence</label>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={Math.round(minConfidence * 100)}
+                onChange={(e) => setMinConfidence(Number(e.target.value) / 100)}
+                className="w-full"
+              />
+              <div className="font-mono text-xs text-concrete">{Math.round(minConfidence * 100)}%</div>
+            </div>
+          </div>
+        )}
+
+        {activeFilters.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-concrete/20 pt-3">
+            <span className="text-xs text-concrete">Active:</span>
+            {activeFilters.map((f, i) => (
+              <span
+                key={i}
+                className="inline-flex items-center gap-1 rounded-sm border border-concrete/20 bg-paper px-2 py-1 text-xs font-mono text-ink"
+              >
+                {f.label}
+                <button onClick={f.onRemove} className="text-concrete hover:text-contradiction">
+                  ×
+                </button>
+              </span>
+            ))}
+            <button
+              onClick={() => {
+                setSource("All");
+                setStatus("All");
+                setDimension("All");
+                setTag("All");
+                setMinConfidence(0);
+              }}
+              className="text-xs text-action hover:underline"
+            >
+              Clear all
+            </button>
+          </div>
+        )}
       </div>
 
-      <div className="overflow-hidden rounded-sm border border-concrete/20 bg-paper shadow-paper">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-manila/40 text-xs font-mono uppercase tracking-wide text-concrete">
-            <tr>
-              <th className="px-4 py-3">Signal</th>
-              <th className="px-4 py-3">Current project</th>
-              <th className="px-4 py-3">Source</th>
-              <th className="px-4 py-3">Tags</th>
-              <th className="px-4 py-3">Strongest signal</th>
-              <th className="px-4 py-3">Confidence</th>
-              <th className="px-4 py-3">Trend</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Why today</th>
-              <th className="px-4 py-3">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-concrete/10">
-            {rows.map((row) => {
-              const cid = row.caseId || row.id;
-              return (
-                <tr key={row.id} className="hover:bg-manila/20">
-                  <td className="px-4 py-3">
-                    <div className="font-sans font-semibold text-ink">{row.person}</div>
-                    {row.isInbound ? <DemoBadge label="Inbound" /> : <DemoBadge label="Talent signal" />}
-                  </td>
-                  <td className="px-4 py-3 text-concrete">{row.currentProject || "—"}</td>
-                  <td className="px-4 py-3 text-concrete">{row.sourceChannel}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-1">
+      {/* Results */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="text-sm text-concrete">
+            <span className="font-display font-semibold text-ink">{rows.length}</span> signals
+          </div>
+        </div>
+
+        {rows.map((row) => {
+          const cid = row.caseId || row.id;
+          const isOpen = openActionId === cid;
+          return (
+            <div
+              key={row.id}
+              className="index-card relative grid grid-cols-1 gap-4 lg:grid-cols-12"
+            >
+              {/* Left: identity */}
+              <div className="lg:col-span-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-manila font-display text-sm font-bold text-ink">
+                    {row.person.split(" ").map((n) => n[0]).join("").slice(0, 2)}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-sans font-semibold text-ink">{row.person}</h3>
+                      <CaseStatusBadge status={row.status} />
+                    </div>
+                    <div className="mt-0.5 text-sm text-concrete truncate">
+                      {row.currentProject || "—"} · {row.sourceChannel}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1">
                       {row.thesisTags.slice(0, 3).map((t) => (
                         <span key={t} className="rounded-sm border border-concrete/20 bg-manila/50 px-1.5 py-0.5 text-[10px] font-mono text-concrete">
                           {t}
                         </span>
                       ))}
                     </div>
-                  </td>
-                  <td className="px-4 py-3 font-sans font-medium text-ink">{row.strongestSignal}</td>
-                  <td className="px-4 py-3 font-mono tabular text-concrete">{Math.round(row.signalConfidence * 100)}%</td>
-                  <td className="px-4 py-3 text-xs text-concrete">{row.momentumTrend.replace(/_/g, " ")}</td>
-                  <td className="px-4 py-3">
-                    <CaseStatusBadge status={row.status} />
-                  </td>
-                  <td className="max-w-xs px-4 py-3 text-xs text-concrete">{row.whyAppeared}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-2">
-                      <Link to={`/cases/${cid}`} className="rounded-sm p-1.5 text-concrete hover:bg-manila/60" title="Open profile">
-                        <Eye size={16} />
-                      </Link>
-                      <button
-                        className="rounded-sm p-1.5 text-concrete hover:bg-manila/60"
-                        title="Monitor"
-                        onClick={() => setCaseOverride(cid, { status: "MONITORING", nextAction: "Monitoring: wait for next signal." })}
-                      >
-                        <Activity size={16} />
-                      </button>
-                      <button
-                        className="rounded-sm p-1.5 text-concrete hover:bg-manila/60"
-                        title="Research"
-                        onClick={() => alert("Demo: research request would queue external lookups.")}
-                      >
-                        <Search size={16} />
-                      </button>
-                      <button
-                        className="rounded-sm p-1.5 text-verified hover:bg-verified/10"
-                        title="Activate"
-                        onClick={() => activateTalent(cid)}
-                      >
-                        <UserPlus size={16} />
-                      </button>
-                      <button
-                        className="rounded-sm p-1.5 text-action hover:bg-action/10"
-                        title="Invite to apply"
-                        onClick={() => setCaseOverride(cid, { status: "AWAITING_APPLICATION", nextAction: "Invitation sent; awaiting application form." })}
-                      >
-                        <Mail size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                  </div>
+                </div>
+              </div>
+
+              {/* Middle: signal */}
+              <div className="lg:col-span-4">
+                <div className="label mb-1">Strongest signal</div>
+                <div className="text-sm font-medium text-ink">{row.strongestSignal}</div>
+                <div className="mt-2 flex items-center gap-3">
+                  <div className="h-2 w-24 overflow-hidden rounded-full bg-concrete/15">
+                    <div
+                      className={`h-full ${row.signalConfidence >= 0.7 ? "bg-verified" : row.signalConfidence >= 0.5 ? "bg-action" : "bg-uncertain"}`}
+                      style={{ width: `${Math.round(row.signalConfidence * 100)}%` }}
+                    />
+                  </div>
+                  <span className="font-mono text-xs font-semibold tabular text-concrete">
+                    {Math.round(row.signalConfidence * 100)}% conf
+                  </span>
+                </div>
+                <div className="mt-1 text-xs text-concrete">{row.momentumTrend.replace(/_/g, " ")}</div>
+              </div>
+
+              {/* Right: why + actions */}
+              <div className="flex flex-col justify-between lg:col-span-4">
+                <div className="text-sm text-concrete line-clamp-2">
+                  <span className="text-ink/70">Why today:</span> {row.whyAppeared}
+                </div>
+                <div className="mt-3 flex items-center gap-2">
+                  <Link
+                    to={`/cases/${cid}`}
+                    className="flex items-center gap-1 rounded-sm bg-action px-3 py-1.5 text-sm font-sans font-medium text-paper hover:bg-action-dark"
+                  >
+                    <Eye size={14} /> Open
+                  </Link>
+                  <button
+                    onClick={() => activateTalent(cid)}
+                    className="flex items-center gap-1 rounded-sm border border-verified/30 bg-verified/10 px-3 py-1.5 text-sm font-sans font-medium text-verified hover:bg-verified/20"
+                  >
+                    <UserPlus size={14} /> Activate
+                  </button>
+                  <div className="relative" ref={isOpen ? actionRef : undefined}>
+                    <button
+                      onClick={() => setOpenActionId(isOpen ? null : cid)}
+                      className="rounded-sm border border-concrete/30 bg-paper p-1.5 text-concrete hover:bg-manila/40"
+                    >
+                      <MoreHorizontal size={18} />
+                    </button>
+                    {isOpen && (
+                      <div className="absolute right-0 top-full z-10 mt-1 w-44 rounded-sm border border-concrete/20 bg-paper shadow-paper-lg">
+                        <button
+                          onClick={() => {
+                            setCaseOverride(cid, { status: "MONITORING", nextAction: "Monitoring: wait for next signal." });
+                            setOpenActionId(null);
+                          }}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-ink hover:bg-manila/40"
+                        >
+                          <Activity size={14} /> Monitor
+                        </button>
+                        <button
+                          onClick={() => {
+                            alert("Demo: research request would queue external lookups.");
+                            setOpenActionId(null);
+                          }}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-ink hover:bg-manila/40"
+                        >
+                          <Search size={14} /> Research
+                        </button>
+                        <button
+                          onClick={() => {
+                            setCaseOverride(cid, { status: "AWAITING_APPLICATION", nextAction: "Invitation sent; awaiting application form." });
+                            setOpenActionId(null);
+                          }}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-ink hover:bg-manila/40"
+                        >
+                          <Mail size={14} /> Invite to apply
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
 
         {rows.length === 0 && (
-          <div className="py-8 text-center text-sm text-concrete">No signals match the current filters.</div>
+          <div className="panel py-12 text-center text-sm text-concrete">No signals match the current filters.</div>
         )}
       </div>
 
@@ -232,7 +334,7 @@ function FilterSelect({
     <div>
       <label className="label mb-1 block">{label}</label>
       <select
-        className="mt-1 w-full rounded-sm border border-concrete/30 bg-paper px-2 py-1 text-sm font-sans outline-none"
+        className="w-full rounded-sm border border-concrete/30 bg-paper px-2 py-2 text-sm font-sans outline-none"
         value={value}
         onChange={(e) => onChange(e.target.value)}
       >
