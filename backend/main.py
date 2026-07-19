@@ -3,9 +3,11 @@ import os
 import uuid
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, HTTPException
+
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from logger_config import configure_logging
 
@@ -13,6 +15,8 @@ configure_logging()
 
 logger = logging.getLogger(__name__)
 
+from database import get_db
+import crud
 from models import (
     Founder,
     Thesis,
@@ -55,14 +59,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# In-memory demo store
-FOUNDERS: Dict[str, Founder] = {}
-THESES: Dict[str, Thesis] = {}
-EVIDENCE: Dict[str, List[EvidenceItem]] = {}
-ASSESSMENTS: Dict[str, Any] = {}
-OPPORTUNITIES: Dict[str, OpportunityScreen] = {}
-CLAIMS: Dict[str, List[Claim]] = {}
 
 
 class CreateFounderRequest(BaseModel):
@@ -110,7 +106,7 @@ def health():
 
 
 @app.post("/v1/founders", response_model=Founder)
-def create_founder(req: CreateFounderRequest):
+def create_founder(req: CreateFounderRequest, db: Session = Depends(get_db)):
     founder_id = f"fnd_{uuid.uuid4().hex[:8]}"
     logger.info(
         "endpoint.create_founder.start founder_id=%s name=%s company=%s",
@@ -128,12 +124,12 @@ def create_founder(req: CreateFounderRequest):
         linkedin_url=req.linkedin_url,
         github_url=req.github_url,
     )
-    FOUNDERS[founder_id] = founder
-    EVIDENCE[founder_id] = []
+    crud.create_founder(db, founder)
 
     # Auto-trigger social background research via Celery.
     background_id = f"soc_{uuid.uuid4().hex[:8]}"
     founder.social_background_id = background_id
+    crud.update_founder(db, founder_id, {"social_background_id": background_id})
     pending = SocialMediaBackground(
         id=background_id,
         founder_id=founder_id,
@@ -156,61 +152,72 @@ def create_founder(req: CreateFounderRequest):
         background_id,
         task.id,
     )
-    return founder
+    return crud.founder_to_pydantic(db, crud.get_founder(db, founder_id))
 
 
-def _apply_social_background(founder_id: str) -> Optional[SocialMediaBackground]:
-    """Reconcile a completed social background result from Redis into memory."""
+def _apply_social_background(db: Session, founder_id: str) -> Optional[SocialMediaBackground]:
+    """Reconcile a completed social background result from the DB into the founder record."""
     background = load_social_background(founder_id)
     if not background:
         return None
 
-    founder = FOUNDERS.get(founder_id)
-    if not founder:
+    db_founder = crud.get_founder(db, founder_id)
+    if not db_founder:
         return background
 
-    founder.social_background_id = background.id
+    crud.update_founder(db, founder_id, {"social_background_id": background.id})
 
     if background.status == "completed" and background.evidence_items:
-        existing_ids = {item.id for item in EVIDENCE.get(founder_id, [])}
+        existing_items = crud.list_evidence_for_founder(db, founder_id)
+        existing_ids = {item.id for item in existing_items}
         new_items = [
             item for item in background.evidence_items if item.id not in existing_ids
         ]
         if new_items:
-            existing = EVIDENCE.get(founder_id, [])
-            existing.extend(new_items)
-            EVIDENCE[founder_id] = existing
-            snapshot = calculate_founder_score(
-                founder_id, existing, founder.latest_score_snapshot
+            crud.add_evidence_items(db, founder_id, new_items)
+            all_items = crud.list_evidence_for_founder(db, founder_id)
+            db_founder = crud.get_founder(db, founder_id)
+            previous = (
+                crud.score_snapshot_to_pydantic(snapshot)
+                if db_founder.latest_score_snapshot_id
+                and (snapshot := crud.get_score_snapshot(db, db_founder.latest_score_snapshot_id))
+                else None
             )
-            founder.latest_score_snapshot = snapshot
+            snapshot = calculate_founder_score(founder_id, all_items, previous)
+            db_snapshot = crud.create_score_snapshot(db, snapshot)
+            crud.update_founder(
+                db, founder_id, {"latest_score_snapshot_id": db_snapshot.id}
+            )
 
     return background
 
 
 @app.get("/v1/founders/pool", response_model=List[FounderPoolItem])
-def list_founder_pool(status: Optional[str] = None):
+def list_founder_pool(status: Optional[str] = None, db: Session = Depends(get_db)):
     """List AI-sourced founder pool recommendations."""
-    pool = load_founder_pool()
-    logger.info("endpoint.list_founder_pool status=%s total=%s", status, len(pool))
+    db_items = crud.list_pool_items(db, status=status)
+    logger.info("endpoint.list_founder_pool status=%s total=%s", status, len(db_items))
     if status:
         try:
             target = PoolItemStatus(status)
-            pool = [item for item in pool if item.status == target]
         except ValueError:
             logger.warning("endpoint.list_founder_pool.invalid_status status=%s", status)
             raise HTTPException(status_code=400, detail="Invalid status")
-    return pool
+    return [crud.pool_item_to_pydantic(item) for item in db_items]
 
 
 @app.post("/v1/founders/pool/refresh")
-def refresh_founder_pool_endpoint(thesis_id: Optional[str] = None):
+def refresh_founder_pool_endpoint(thesis_id: Optional[str] = None, db: Session = Depends(get_db)):
     """Manually trigger the AI sourcing agent to discover new founders."""
     logger.info("endpoint.refresh_founder_pool.start thesis_id=%s", thesis_id)
-    thesis = THESES.get(thesis_id) if thesis_id else None
-    if thesis_id and not thesis:
-        logger.warning("endpoint.refresh_founder_pool.thesis_not_found thesis_id=%s", thesis_id)
-        raise HTTPException(status_code=404, detail="Thesis not found")
+    if thesis_id:
+        db_thesis = crud.get_thesis(db, thesis_id)
+        if not db_thesis:
+            logger.warning("endpoint.refresh_founder_pool.thesis_not_found thesis_id=%s", thesis_id)
+            raise HTTPException(status_code=404, detail="Thesis not found")
+        thesis = crud.thesis_to_pydantic(db_thesis)
+    else:
+        thesis = None
 
     task = refresh_pool_task.delay(
         sectors=thesis.sectors if thesis else None,
@@ -228,14 +235,14 @@ def refresh_founder_pool_endpoint(thesis_id: Optional[str] = None):
 
 
 @app.post("/v1/founders/pool/{item_id}/approve", response_model=Founder)
-def approve_pool_item(item_id: str):
+def approve_pool_item(item_id: str, db: Session = Depends(get_db)):
     """Approve a pool recommendation and create a Founder record."""
     logger.info("endpoint.approve_pool_item.start item_id=%s", item_id)
-    pool = load_founder_pool()
-    item = next((p for p in pool if p.id == item_id), None)
-    if not item:
+    db_item = crud.get_pool_item(db, item_id)
+    if not db_item:
         logger.warning("endpoint.approve_pool_item.not_found item_id=%s", item_id)
         raise HTTPException(status_code=404, detail="Pool item not found")
+    item = crud.pool_item_to_pydantic(db_item)
     if item.status != PoolItemStatus.RECOMMENDED:
         logger.warning(
             "endpoint.approve_pool_item.invalid_status item_id=%s status=%s",
@@ -255,12 +262,11 @@ def approve_pool_item(item_id: str):
         linkedin_url=item.linkedin_url,
         github_url=item.github_url,
     )
-    FOUNDERS[founder_id] = founder
-    EVIDENCE[founder_id] = []
+    crud.create_founder(db, founder)
 
     # Auto-trigger social background research.
     background_id = f"soc_{uuid.uuid4().hex[:8]}"
-    founder.social_background_id = background_id
+    crud.update_founder(db, founder_id, {"social_background_id": background_id})
     pending = SocialMediaBackground(
         id=background_id,
         founder_id=founder_id,
@@ -278,35 +284,31 @@ def approve_pool_item(item_id: str):
         auto_score=True,
     )
 
-    item.status = PoolItemStatus.APPROVED
-    save_founder_pool(pool)
+    crud.update_pool_item_status(db, item_id, PoolItemStatus.APPROVED.value)
     logger.info(
         "endpoint.approve_pool_item.end item_id=%s founder_id=%s background_id=%s",
         item_id,
         founder_id,
         background_id,
     )
-    return founder
+    return crud.founder_to_pydantic(db, crud.get_founder(db, founder_id))
 
 
 @app.post("/v1/founders/pool/{item_id}/dismiss")
-def dismiss_pool_item(item_id: str):
+def dismiss_pool_item(item_id: str, db: Session = Depends(get_db)):
     """Dismiss a pool recommendation."""
     logger.info("endpoint.dismiss_pool_item.start item_id=%s", item_id)
-    pool = load_founder_pool()
-    item = next((p for p in pool if p.id == item_id), None)
-    if not item:
+    db_item = crud.get_pool_item(db, item_id)
+    if not db_item:
         logger.warning("endpoint.dismiss_pool_item.not_found item_id=%s", item_id)
         raise HTTPException(status_code=404, detail="Pool item not found")
-    item.status = PoolItemStatus.DISMISSED
-    save_founder_pool(pool)
+    crud.update_pool_item_status(db, item_id, PoolItemStatus.DISMISSED.value)
     logger.info("endpoint.dismiss_pool_item.end item_id=%s", item_id)
     return {"id": item_id, "status": PoolItemStatus.DISMISSED.value}
 
 
-
 @app.post("/v1/founders/research", response_model=Founder)
-def research_founder(req: ResearchFounderRequest):
+def research_founder(req: ResearchFounderRequest, db: Session = Depends(get_db)):
     """Research a founder with Umans AI web search and create a scored profile."""
     logger.info("endpoint.research_founder.start query=%s channels=%s", req.query, req.channels)
     try:
@@ -327,14 +329,14 @@ def research_founder(req: ResearchFounderRequest):
     evidence_data = result.get("evidence", [])
 
     founder = create_founder_from_research(profile, summary, sources)
-    FOUNDERS[founder.id] = founder
-    EVIDENCE[founder.id] = []
+    crud.create_founder(db, founder)
 
     evidence_items = [evidence_from_llm(founder.id, item) for item in evidence_data]
     if req.auto_score and evidence_items:
-        EVIDENCE[founder.id] = evidence_items
+        crud.add_evidence_items(db, founder.id, evidence_items)
         snapshot = calculate_founder_score(founder.id, evidence_items)
-        founder.latest_score_snapshot = snapshot
+        db_snapshot = crud.create_score_snapshot(db, snapshot)
+        crud.update_founder(db, founder.id, {"latest_score_snapshot_id": db_snapshot.id})
 
     logger.info(
         "endpoint.research_founder.end founder_id=%s name=%s evidence_count=%s scored=%s",
@@ -343,30 +345,32 @@ def research_founder(req: ResearchFounderRequest):
         len(evidence_items),
         req.auto_score and len(evidence_items) > 0,
     )
-    return founder
+    return crud.founder_to_pydantic(db, crud.get_founder(db, founder.id))
 
 
 @app.get("/v1/founders/{founder_id}", response_model=Founder)
-def get_founder(founder_id: str):
-    if founder_id not in FOUNDERS:
+def get_founder(founder_id: str, db: Session = Depends(get_db)):
+    db_founder = crud.get_founder(db, founder_id)
+    if not db_founder:
         logger.warning("endpoint.get_founder.not_found founder_id=%s", founder_id)
         raise HTTPException(status_code=404, detail="Founder not found")
-    _apply_social_background(founder_id)
+    _apply_social_background(db, founder_id)
     logger.info("endpoint.get_founder.ok founder_id=%s", founder_id)
-    return FOUNDERS[founder_id]
+    return crud.founder_to_pydantic(db, db_founder)
 
 
 @app.post("/v1/founders/{founder_id}/research-social")
-def research_social(founder_id: str):
+def research_social(founder_id: str, db: Session = Depends(get_db)):
     """Manually re-run social background research for a founder."""
     logger.info("endpoint.research_social.start founder_id=%s", founder_id)
-    if founder_id not in FOUNDERS:
+    db_founder = crud.get_founder(db, founder_id)
+    if not db_founder:
         logger.warning("endpoint.research_social.not_found founder_id=%s", founder_id)
         raise HTTPException(status_code=404, detail="Founder not found")
 
-    founder = FOUNDERS[founder_id]
+    founder = crud.founder_to_pydantic(db, db_founder)
     background_id = f"soc_{uuid.uuid4().hex[:8]}"
-    founder.social_background_id = background_id
+    crud.update_founder(db, founder_id, {"social_background_id": background_id})
     pending = SocialMediaBackground(
         id=background_id,
         founder_id=founder_id,
@@ -398,13 +402,14 @@ def research_social(founder_id: str):
 
 
 @app.get("/v1/founders/{founder_id}/social-background", response_model=SocialMediaBackground)
-def get_social_background(founder_id: str):
+def get_social_background(founder_id: str, db: Session = Depends(get_db)):
     """Get the latest social background research result for a founder."""
     logger.info("endpoint.get_social_background.start founder_id=%s", founder_id)
-    if founder_id not in FOUNDERS:
+    db_founder = crud.get_founder(db, founder_id)
+    if not db_founder:
         logger.warning("endpoint.get_social_background.founder_not_found founder_id=%s", founder_id)
         raise HTTPException(status_code=404, detail="Founder not found")
-    background = _apply_social_background(founder_id)
+    background = _apply_social_background(db, founder_id)
     if not background:
         logger.warning("endpoint.get_social_background.not_found founder_id=%s", founder_id)
         raise HTTPException(status_code=404, detail="Social background not found")
@@ -417,67 +422,78 @@ def get_social_background(founder_id: str):
 
 
 @app.post("/v1/founders/{founder_id}/evidence", response_model=ScoreSnapshot)
-def add_evidence(founder_id: str, req: AddEvidenceRequest):
+def add_evidence(founder_id: str, req: AddEvidenceRequest, db: Session = Depends(get_db)):
     logger.info(
         "endpoint.add_evidence.start founder_id=%s item_count=%s",
         founder_id,
         len(req.items),
     )
-    if founder_id not in FOUNDERS:
+    db_founder = crud.get_founder(db, founder_id)
+    if not db_founder:
         logger.warning("endpoint.add_evidence.founder_not_found founder_id=%s", founder_id)
         raise HTTPException(status_code=404, detail="Founder not found")
 
-    previous = FOUNDERS[founder_id].latest_score_snapshot
-    existing = EVIDENCE.get(founder_id, [])
-    for item in req.items:
-        existing.append(item)
-    EVIDENCE[founder_id] = existing
+    previous = (
+        crud.score_snapshot_to_pydantic(snapshot)
+        if db_founder.latest_score_snapshot_id
+        and (snapshot := crud.get_score_snapshot(db, db_founder.latest_score_snapshot_id))
+        else None
+    )
+    crud.add_evidence_items(db, founder_id, req.items)
+    all_items = crud.list_evidence_for_founder(db, founder_id)
+    snapshot = calculate_founder_score(founder_id, all_items, previous)
+    db_snapshot = crud.create_score_snapshot(db, snapshot)
+    crud.update_founder(db, founder_id, {"latest_score_snapshot_id": db_snapshot.id})
 
-    snapshot = calculate_founder_score(founder_id, existing, previous)
-    FOUNDERS[founder_id].latest_score_snapshot = snapshot
     logger.info(
         "endpoint.add_evidence.end founder_id=%s founder_score=%s confidence=%s",
         founder_id,
         snapshot.founder_score,
         snapshot.overall_confidence,
     )
-    return snapshot
+    return crud.score_snapshot_to_pydantic(db_snapshot)
 
 
 @app.get("/v1/founders/{founder_id}/score", response_model=ScoreSnapshot)
-def get_score(founder_id: str):
-    if founder_id not in FOUNDERS:
+def get_score(founder_id: str, db: Session = Depends(get_db)):
+    db_founder = crud.get_founder(db, founder_id)
+    if not db_founder:
         logger.warning("endpoint.get_score.not_found founder_id=%s", founder_id)
         raise HTTPException(status_code=404, detail="Founder not found")
-    snapshot = FOUNDERS[founder_id].latest_score_snapshot
-    if not snapshot:
-        snapshot = calculate_founder_score(founder_id, EVIDENCE.get(founder_id, []))
-        FOUNDERS[founder_id].latest_score_snapshot = snapshot
+    if db_founder.latest_score_snapshot_id:
+        db_snapshot = crud.get_score_snapshot(db, db_founder.latest_score_snapshot_id)
+        if db_snapshot:
+            return crud.score_snapshot_to_pydantic(db_snapshot)
+    all_items = crud.list_evidence_for_founder(db, founder_id)
+    snapshot = calculate_founder_score(founder_id, all_items)
+    db_snapshot = crud.create_score_snapshot(db, snapshot)
+    crud.update_founder(db, founder_id, {"latest_score_snapshot_id": db_snapshot.id})
     logger.info(
         "endpoint.get_score.ok founder_id=%s founder_score=%s confidence=%s",
         founder_id,
         snapshot.founder_score,
         snapshot.overall_confidence,
     )
-    return snapshot
+    return crud.score_snapshot_to_pydantic(db_snapshot)
 
 
 @app.get("/v1/founders/{founder_id}/history", response_model=List[ScoreSnapshot])
-def get_history(founder_id: str):
-    if founder_id not in FOUNDERS:
+def get_history(founder_id: str, db: Session = Depends(get_db)):
+    db_founder = crud.get_founder(db, founder_id)
+    if not db_founder:
         logger.warning("endpoint.get_history.not_found founder_id=%s", founder_id)
         raise HTTPException(status_code=404, detail="Founder not found")
-    snapshot = FOUNDERS[founder_id].latest_score_snapshot
+    snapshots = crud.list_score_snapshots_for_founder(db, founder_id)
     logger.info(
         "endpoint.get_history.ok founder_id=%s snapshot_count=%s",
         founder_id,
-        1 if snapshot else 0,
+        len(snapshots),
     )
-    return [snapshot] if snapshot else []
+    return snapshots
 
 
 @app.post("/v1/theses", response_model=Thesis)
-def create_thesis(req: CreateThesisRequest):
+def create_thesis(req: CreateThesisRequest, db: Session = Depends(get_db)):
     thesis_id = f"ths_{uuid.uuid4().hex[:8]}"
     logger.info(
         "endpoint.create_thesis.start thesis_id=%s name=%s sectors=%s stages=%s geographies=%s",
@@ -498,33 +514,45 @@ def create_thesis(req: CreateThesisRequest):
         risk_appetite=req.risk_appetite,
         min_evidence_requirements=req.min_evidence_requirements or {},
     )
-    THESES[thesis_id] = thesis
+    db_thesis = crud.create_thesis(db, thesis)
     logger.info("endpoint.create_thesis.end thesis_id=%s", thesis_id)
-    return thesis
+    return crud.thesis_to_pydantic(db_thesis)
 
 
 @app.get("/v1/theses", response_model=List[Thesis])
-def list_theses():
-    logger.info("endpoint.list_theses count=%s", len(THESES))
-    return list(THESES.values())
+def list_theses(db: Session = Depends(get_db)):
+    db_theses = crud.list_theses(db)
+    logger.info("endpoint.list_theses count=%s", len(db_theses))
+    return [crud.thesis_to_pydantic(t) for t in db_theses]
 
 
 @app.get("/v1/founders", response_model=List[Founder])
-def list_founders():
-    logger.info("endpoint.list_founders count=%s", len(FOUNDERS))
-    return list(FOUNDERS.values())
+def list_founders(db: Session = Depends(get_db)):
+    db_founders = crud.list_founders(db)
+    logger.info("endpoint.list_founders count=%s", len(db_founders))
+    return [crud.founder_to_pydantic(db, f) for f in db_founders]
 
 
 @app.post("/v1/assessments/plan")
-def plan_assessment(founder_id: str):
+def plan_assessment(founder_id: str, db: Session = Depends(get_db)):
     logger.info("endpoint.plan_assessment.start founder_id=%s", founder_id)
-    if founder_id not in FOUNDERS:
+    db_founder = crud.get_founder(db, founder_id)
+    if not db_founder:
         logger.warning("endpoint.plan_assessment.not_found founder_id=%s", founder_id)
         raise HTTPException(status_code=404, detail="Founder not found")
-    snapshot = FOUNDERS[founder_id].latest_score_snapshot
-    if not snapshot:
-        snapshot = calculate_founder_score(founder_id, EVIDENCE.get(founder_id, []))
-        FOUNDERS[founder_id].latest_score_snapshot = snapshot
+
+    db_snapshot = (
+        crud.get_score_snapshot(db, db_founder.latest_score_snapshot_id)
+        if db_founder.latest_score_snapshot_id
+        else None
+    )
+    if db_snapshot:
+        snapshot = crud.score_snapshot_to_pydantic(db_snapshot)
+    else:
+        all_items = crud.list_evidence_for_founder(db, founder_id)
+        snapshot = calculate_founder_score(founder_id, all_items)
+        db_snapshot = crud.create_score_snapshot(db, snapshot)
+        crud.update_founder(db, founder_id, {"latest_score_snapshot_id": db_snapshot.id})
 
     # Simple gap planner: pick modules for low-confidence / unknown dimensions.
     low_dims = [
@@ -570,13 +598,14 @@ def plan_assessment(founder_id: str):
 
 
 @app.post("/v1/assessments/simulate", response_model=ScoreSnapshot)
-def simulate_assessment(req: SimulateAssessmentRequest):
+def simulate_assessment(req: SimulateAssessmentRequest, db: Session = Depends(get_db)):
     logger.info(
         "endpoint.simulate_assessment.start founder_id=%s modules=%s",
         req.founder_id,
         [m.value for m in req.modules],
     )
-    if req.founder_id not in FOUNDERS:
+    db_founder = crud.get_founder(db, req.founder_id)
+    if not db_founder:
         logger.warning("endpoint.simulate_assessment.not_found founder_id=%s", req.founder_id)
         raise HTTPException(status_code=404, detail="Founder not found")
 
@@ -614,38 +643,44 @@ def simulate_assessment(req: SimulateAssessmentRequest):
         )
         new_evidence.append(item)
 
-    previous = FOUNDERS[req.founder_id].latest_score_snapshot
-    existing = EVIDENCE.get(req.founder_id, [])
-    existing.extend(new_evidence)
-    EVIDENCE[req.founder_id] = existing
-
-    snapshot = calculate_founder_score(req.founder_id, existing, previous)
-    FOUNDERS[req.founder_id].latest_score_snapshot = snapshot
+    previous = (
+        crud.score_snapshot_to_pydantic(snapshot)
+        if db_founder.latest_score_snapshot_id
+        and (snapshot := crud.get_score_snapshot(db, db_founder.latest_score_snapshot_id))
+        else None
+    )
+    crud.add_evidence_items(db, req.founder_id, new_evidence)
+    all_items = crud.list_evidence_for_founder(db, req.founder_id)
+    snapshot = calculate_founder_score(req.founder_id, all_items, previous)
+    db_snapshot = crud.create_score_snapshot(db, snapshot)
+    crud.update_founder(db, req.founder_id, {"latest_score_snapshot_id": db_snapshot.id})
     logger.info(
         "endpoint.simulate_assessment.end founder_id=%s founder_score=%s confidence=%s",
         req.founder_id,
         snapshot.founder_score,
         snapshot.overall_confidence,
     )
-    return snapshot
+    return crud.score_snapshot_to_pydantic(db_snapshot)
 
 
 @app.post("/v1/opportunities/{opportunity_id}/screen", response_model=OpportunityScreen)
-def screen_opportunity(opportunity_id: str):
+def screen_opportunity(opportunity_id: str, db: Session = Depends(get_db)):
     logger.info("endpoint.screen_opportunity.start opportunity_id=%s", opportunity_id)
-    # Always recalculate from the current founder snapshot for this demo.
-    opp = OPPORTUNITIES.get(opportunity_id)
-    if opp:
-        snapshot = FOUNDERS[opp.founder_id].latest_score_snapshot
-        if not snapshot:
-            snapshot = calculate_founder_score(opp.founder_id, EVIDENCE.get(opp.founder_id, []))
-            FOUNDERS[opp.founder_id].latest_score_snapshot = snapshot
-        opp.founder_score = snapshot.founder_score
-        opp.founder_confidence = snapshot.overall_confidence
-        if snapshot.overall_confidence < 0.3:
+    db_opp = crud.get_opportunity(db, opportunity_id)
+    if db_opp:
+        opp = crud.opportunity_to_pydantic(db_opp)
+        db_founder = crud.get_founder(db, opp.founder_id)
+        if db_founder and db_founder.latest_score_snapshot_id:
+            db_snapshot = crud.get_score_snapshot(db, db_founder.latest_score_snapshot_id)
+            if db_snapshot:
+                snapshot = crud.score_snapshot_to_pydantic(db_snapshot)
+                opp.founder_score = snapshot.founder_score
+                opp.founder_confidence = snapshot.overall_confidence
+        if opp.founder_confidence < 0.3:
             opp.next_founder_action = "Run structured cold-start assessment."
         else:
             opp.next_founder_action = "Run customer reference and team-scaling review."
+        crud.create_or_update_opportunity(db, opp)
         logger.info(
             "endpoint.screen_opportunity.end opportunity_id=%s founder_id=%s score=%s confidence=%s",
             opportunity_id,
@@ -654,44 +689,52 @@ def screen_opportunity(opportunity_id: str):
             opp.founder_confidence,
         )
         return opp
-    if opportunity_id not in OPPORTUNITIES:
-        # Build demo opportunity for the first founder if available.
-        founder_id = next(iter(FOUNDERS)) if FOUNDERS else None
-        if not founder_id:
-            raise HTTPException(status_code=404, detail="No founder available")
-        snapshot = FOUNDERS[founder_id].latest_score_snapshot
-        if not snapshot:
-            snapshot = calculate_founder_score(founder_id, EVIDENCE.get(founder_id, []))
-            FOUNDERS[founder_id].latest_score_snapshot = snapshot
-        opp = OpportunityScreen(
-            opportunity_id=opportunity_id,
-            founder_id=founder_id,
-            founder_score=snapshot.founder_score,
-            founder_confidence=snapshot.overall_confidence,
-            founder_market_fit=FounderMarketFit(score=72.0, confidence=0.42, coverage=0.35),
-            team_completeness=TeamCompleteness(score=48.0, confidence=0.30, coverage=0.25),
-            market_posture="neutral",
-            market_confidence=0.35,
-            idea_vs_market_posture="weak, pivotable",
-            idea_vs_market_confidence=0.40,
-            next_founder_action="Run customer reference and team-scaling review.",
-        )
-        OPPORTUNITIES[opportunity_id] = opp
+
+    # Build a demo opportunity for the first founder if available.
+    db_founders = crud.list_founders(db)
+    if not db_founders:
+        raise HTTPException(status_code=404, detail="No founder available")
+    db_founder = db_founders[0]
+    founder_id = db_founder.id
+    all_items = crud.list_evidence_for_founder(db, founder_id)
+    if db_founder.latest_score_snapshot_id:
+        db_snapshot = crud.get_score_snapshot(db, db_founder.latest_score_snapshot_id)
+        snapshot = crud.score_snapshot_to_pydantic(db_snapshot) if db_snapshot else None
+    else:
+        snapshot = calculate_founder_score(founder_id, all_items)
+        db_snapshot = crud.create_score_snapshot(db, snapshot)
+        crud.update_founder(db, founder_id, {"latest_score_snapshot_id": db_snapshot.id})
+
+    opp = OpportunityScreen(
+        opportunity_id=opportunity_id,
+        founder_id=founder_id,
+        founder_score=snapshot.founder_score,
+        founder_confidence=snapshot.overall_confidence,
+        founder_market_fit=FounderMarketFit(score=72.0, confidence=0.42, coverage=0.35),
+        team_completeness=TeamCompleteness(score=48.0, confidence=0.30, coverage=0.25),
+        market_posture="neutral",
+        market_confidence=0.35,
+        idea_vs_market_posture="weak, pivotable",
+        idea_vs_market_confidence=0.40,
+        next_founder_action="Run customer reference and team-scaling review.",
+    )
+    crud.create_or_update_opportunity(db, opp)
     logger.info(
         "endpoint.screen_opportunity.end opportunity_id=%s founder_id=%s score=%s confidence=%s",
         opportunity_id,
-        OPPORTUNITIES[opportunity_id].founder_id,
-        OPPORTUNITIES[opportunity_id].founder_score,
-        OPPORTUNITIES[opportunity_id].founder_confidence,
+        opp.founder_id,
+        opp.founder_score,
+        opp.founder_confidence,
     )
-    return OPPORTUNITIES[opportunity_id]
+    return opp
 
 
 @app.get("/v1/opportunities/{opportunity_id}/diligence", response_model=List[Claim])
-def get_diligence(opportunity_id: str):
+def get_diligence(opportunity_id: str, db: Session = Depends(get_db)):
     logger.info("endpoint.get_diligence.start opportunity_id=%s", opportunity_id)
-    if opportunity_id not in CLAIMS:
-        CLAIMS[opportunity_id] = [
+    claims = crud.list_claims_for_opportunity(db, opportunity_id)
+    if not claims:
+        claims = [
             Claim(
                 id=f"clm_{uuid.uuid4().hex[:8]}",
                 opportunity_id=opportunity_id,
@@ -710,27 +753,27 @@ def get_diligence(opportunity_id: str):
                 source="Application form",
                 trust_status=TrustStatus.SUPPORTED,
                 confidence=0.65,
-            next_action="Verify with two customer references",
-        ),
-    ]
+                next_action="Verify with two customer references",
+            ),
+        ]
+        crud.create_claims(db, claims)
     logger.info(
         "endpoint.get_diligence.end opportunity_id=%s claim_count=%s",
         opportunity_id,
-        len(CLAIMS[opportunity_id]),
+        len(claims),
     )
-    return CLAIMS[opportunity_id]
+    return claims
 
 
 @app.post("/v1/seed")
-def seed_demo():
+def seed_demo(db: Session = Depends(get_db)):
     """Seed the hackathon demonstrator."""
     logger.info("endpoint.seed_demo.start")
-    # Clear
-    FOUNDERS.clear()
-    EVIDENCE.clear()
-    THESES.clear()
-    OPPORTUNITIES.clear()
-    CLAIMS.clear()
+
+    # Clear tables in a safe order.
+    from sqlalchemy import text
+    db.execute(text("TRUNCATE claims, opportunities, score_snapshots, evidence_items, social_media_backgrounds, founder_pool_items, theses, founders CASCADE"))
+    db.commit()
 
     # Create thesis
     thesis = create_thesis(
@@ -742,7 +785,8 @@ def seed_demo():
             check_size_min=250_000,
             check_size_max=1_500_000,
             risk_appetite="moderate",
-        )
+        ),
+        db,
     )
 
     # Create cold-start founder
@@ -753,16 +797,19 @@ def seed_demo():
             current_company="ContextLoop",
             role="Founder",
             location="Bangalore",
-        )
+        ),
+        db,
     )
 
     # No evidence => score near neutral with low confidence and clear unknowns.
+    db_founder = crud.get_founder(db, founder.id)
     snapshot = calculate_founder_score(founder.id, [])
-    FOUNDERS[founder.id].latest_score_snapshot = snapshot
+    db_snapshot = crud.create_score_snapshot(db, snapshot)
+    crud.update_founder(db, founder.id, {"latest_score_snapshot_id": db_snapshot.id})
 
     # Create opportunity
     opp_id = f"opp_{uuid.uuid4().hex[:8]}"
-    OPPORTUNITIES[opp_id] = OpportunityScreen(
+    opp = OpportunityScreen(
         opportunity_id=opp_id,
         founder_id=founder.id,
         founder_score=snapshot.founder_score,
@@ -775,6 +822,7 @@ def seed_demo():
         idea_vs_market_confidence=0.0,
         next_founder_action="Run structured cold-start assessment.",
     )
+    crud.create_or_update_opportunity(db, opp)
 
     logger.info(
         "endpoint.seed_demo.end thesis_id=%s founder_id=%s opportunity_id=%s",

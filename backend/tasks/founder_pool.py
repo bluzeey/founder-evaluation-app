@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 import uuid
@@ -7,13 +6,14 @@ from typing import Any, Dict, List, Optional
 import redis
 
 from celery_app import app
+from database import SessionLocal
+import crud
+import db_models
 from models import FounderPoolItem, PoolItemStatus
-from research import SourcingAgent
 
 logger = logging.getLogger(__name__)
 
 REDIS_URL = os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
-POOL_KEY = "founder_pool"
 POOL_LOCK_KEY = "founder_pool_refresh_lock"
 POOL_LOCK_TTL_SECONDS = int(os.environ.get("POOL_LOCK_TTL_SECONDS", "300"))
 
@@ -29,21 +29,35 @@ def _dedup_key(item: FounderPoolItem) -> str:
     return f"{name}|{company}|{linkedin}"
 
 
-def load_founder_pool() -> List[FounderPoolItem]:
-    """Load the current founder pool from Redis."""
-    client = _redis_client()
-    raw = client.get(POOL_KEY)
-    if not raw:
-        return []
-    data = json.loads(raw)
-    return [FounderPoolItem(**item) for item in data]
+def load_founder_pool(status: Optional[str] = None) -> List[FounderPoolItem]:
+    """Load the current founder pool from the database."""
+    db = SessionLocal()
+    try:
+        db_items = crud.list_pool_items(db, status=status)
+        return [crud.pool_item_to_pydantic(item) for item in db_items]
+    finally:
+        db.close()
 
 
 def save_founder_pool(pool: List[FounderPoolItem]) -> None:
-    """Persist the founder pool to Redis."""
-    client = _redis_client()
-    data = [item.model_dump(mode="json") for item in pool]
-    client.set(POOL_KEY, json.dumps(data))
+    """Persist the latest pool statuses to the database.
+
+    Existing items are updated; new items are inserted.
+    """
+    db = SessionLocal()
+    try:
+        new_items = []
+        for item in pool:
+            db_item = crud.get_pool_item(db, item.id)
+            if db_item:
+                db_item.status = item.status.value
+            else:
+                new_items.append(item)
+        if new_items:
+            crud.create_pool_items(db, new_items)
+        db.commit()
+    finally:
+        db.close()
 
 
 def acquire_refresh_lock() -> bool:
@@ -80,10 +94,10 @@ def refresh_founder_pool(
     risk_appetite: str = "moderate",
     thesis_id: Optional[str] = None,
 ) -> List[FounderPoolItem]:
-    """Run the sourcing agent and append new recommendations to the pool.
+    """Run the sourcing agent and append new recommendations to the database pool.
 
-    Existing recommended items are kept; new items are appended at the front.
-    Approved/dismissed items are preserved. Duplicate candidates are skipped.
+    Existing recommended items are replaced; approved/dismissed items are preserved.
+    Duplicate candidates are skipped.
     """
     sectors = sectors or ["B2B SaaS", "AI Infrastructure"]
     stages = stages or ["pre-seed", "seed"]
@@ -102,9 +116,12 @@ def refresh_founder_pool(
         logger.warning("founder_pool.refresh.skip_locked")
         return load_founder_pool()
 
+    db = SessionLocal()
     try:
-        existing = load_founder_pool()
+        existing = crud.list_pool_items(db)
         logger.info("founder_pool.refresh.existing_count count=%s", len(existing))
+
+        from research import SourcingAgent
 
         agent = SourcingAgent()
         result = agent.discover(
@@ -117,7 +134,7 @@ def refresh_founder_pool(
         recommendations = result.get("recommendations", []) or []
 
         # Build a set of existing dedup keys across the whole pool.
-        existing_keys = {_dedup_key(item) for item in existing}
+        existing_keys = {_dedup_key(crud.pool_item_to_pydantic(item)) for item in existing}
 
         new_items = []
         skipped = 0
@@ -136,7 +153,7 @@ def refresh_founder_pool(
                 thesis_id=thesis_id,
             )
             key = _dedup_key(item)
-            if key in existing_keys:
+            if key in existing_keys or crud.pool_item_exists(db, item.name, item.current_company, item.linkedin_url):
                 skipped += 1
                 logger.info(
                     "founder_pool.refresh.skip_duplicate name=%s company=%s",
@@ -149,29 +166,25 @@ def refresh_founder_pool(
 
         # Replace existing recommended items with the new batch when we have
         # valid new candidates; otherwise keep the old recommendations so the
-        # pool does not empty unexpectedly. APPROVED/DISMISSED items are kept
-        # forever. Deduplicate new items against the whole pool.
-        existing_final = [
-            item for item in existing if item.status != PoolItemStatus.RECOMMENDED
-        ]
-        existing_recommended = [
-            item for item in existing if item.status == PoolItemStatus.RECOMMENDED
-        ]
+        # pool does not empty unexpectedly. Approved/dismissed items are kept.
         if new_items:
-            pool = new_items + existing_final
-        else:
-            pool = existing_recommended + existing_final
-        save_founder_pool(pool)
+            db.query(db_models.FounderPoolItem).filter(
+                db_models.FounderPoolItem.status == PoolItemStatus.RECOMMENDED.value
+            ).delete(synchronize_session=False)
+            crud.create_pool_items(db, new_items)
+
+        db.commit()
 
         logger.info(
             "founder_pool.refresh.end added=%s skipped=%s total=%s",
             len(new_items),
             skipped,
-            len(pool),
+            len(crud.list_pool_items(db)),
         )
-        return pool
+        return load_founder_pool()
     finally:
         release_refresh_lock()
+        db.close()
 
 
 @app.task(bind=True, max_retries=2, default_retry_delay=5)

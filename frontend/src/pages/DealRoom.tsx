@@ -179,6 +179,14 @@ export default function DealRoom() {
         )}
       </div>
 
+      <ActionPanel
+        isHold={isHold}
+        role={role}
+        onResolve={handleResolve}
+        resolving={resolving}
+        onDecision={handleDecision}
+      />
+
       <div className="border-b border-concrete/20">
         <div className="flex gap-1 overflow-x-auto">
           {TABS.map((tab) => {
@@ -205,7 +213,7 @@ export default function DealRoom() {
         </div>
       </div>
 
-      {activeTab === "overview" && (
+        {activeTab === "overview" && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
             {investmentCase.axes.map((a) => (
@@ -217,13 +225,6 @@ export default function DealRoom() {
               <DriverCard key={d.key} driver={d} onClaimClick={openClaim} />
             ))}
           </div>
-          <ActionPanel
-            isHold={isHold}
-            role={role}
-            onResolve={handleResolve}
-            resolving={resolving}
-            onDecision={handleDecision}
-          />
         </div>
       )}
 

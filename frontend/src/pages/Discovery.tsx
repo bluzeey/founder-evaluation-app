@@ -1,6 +1,6 @@
 import { useMemo, useState, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { Search, Filter, MoreHorizontal, UserPlus, Eye, Mail, Activity, ChevronDown } from "lucide-react";
+import { Search, MoreHorizontal, UserPlus, Eye, Mail, Activity, ChevronDown } from "lucide-react";
 import { DEMO_CASES, TALENT_SIGNALS, getDemoPerson, getDemoCompany } from "@/data/demoCases";
 import { useApp } from "@/store/appContext";
 import { CaseStatusBadge } from "@/components/StatusBadge";
@@ -110,38 +110,33 @@ export default function Discovery() {
       </div>
 
       {/* Filters */}
-      <div className="panel space-y-3 border-manila-dark/30 bg-manila/20">
-        <div className="flex items-center gap-2 text-sm font-semibold text-ink">
-          <Filter size={16} /> Filters
-        </div>
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
-          <div className="flex flex-1 items-center gap-2 rounded-sm border border-concrete/30 bg-paper px-3 py-2">
-            <Search size={16} className="text-concrete" />
+      <div className="rounded-sm border border-concrete/20 bg-manila/20 p-3 shadow-paper">
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="flex min-w-[180px] flex-1 items-center gap-2 rounded-sm border border-concrete/30 bg-paper px-2 py-1.5">
+            <Search size={14} className="text-concrete" />
             <input
-              className="flex-1 bg-transparent text-sm font-sans outline-none"
+              className="min-w-0 flex-1 bg-transparent text-sm font-sans outline-none"
               placeholder="Search person or project"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
-          <div className="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-3 lg:flex-none lg:grid-cols-3">
-            <FilterSelect value={source} onChange={setSource} options={["All", ...SOURCE_OPTIONS]} label="Source" />
-            <FilterSelect value={status} onChange={setStatus} options={["All", ...STATUS_OPTIONS]} label="Status" />
-            <FilterSelect value={dimension} onChange={setDimension} options={["All", ...DIM_OPTIONS]} label="Signal" />
-          </div>
+          <FilterSelect value={source} onChange={setSource} options={["All", ...SOURCE_OPTIONS]} label="Source" />
+          <FilterSelect value={status} onChange={setStatus} options={["All", ...STATUS_OPTIONS]} label="Status" />
+          <FilterSelect value={dimension} onChange={setDimension} options={["All", ...DIM_OPTIONS]} label="Signal" />
           <button
             onClick={() => setShowMoreFilters((s) => !s)}
-            className="flex items-center gap-1 rounded-sm border border-concrete/30 bg-paper px-3 py-2 text-sm font-sans font-medium text-ink hover:bg-manila/40"
+            className="flex items-center gap-1 rounded-sm border border-concrete/30 bg-paper px-2 py-1.5 text-sm font-sans font-medium text-ink hover:bg-manila/40"
           >
             More <ChevronDown size={14} className={`transition-transform ${showMoreFilters ? "rotate-180" : ""}`} />
           </button>
         </div>
 
         {showMoreFilters && (
-          <div className="grid grid-cols-1 gap-3 border-t border-concrete/20 pt-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-2 grid grid-cols-1 gap-2 border-t border-concrete/20 pt-2 sm:grid-cols-2 lg:grid-cols-4">
             <FilterSelect value={tag} onChange={setTag} options={["All", ...TAG_OPTIONS]} label="Thesis tag" />
             <div>
-              <label className="label mb-1 block">Min confidence</label>
+              <label className="label mb-0.5 block">Min confidence</label>
               <input
                 type="range"
                 min={0}
@@ -150,7 +145,7 @@ export default function Discovery() {
                 onChange={(e) => setMinConfidence(Number(e.target.value) / 100)}
                 className="w-full"
               />
-              <div className="font-mono text-xs text-concrete">{Math.round(minConfidence * 100)}%</div>
+              <div className="font-mono text-[10px] text-concrete">{Math.round(minConfidence * 100)}%</div>
             </div>
           </div>
         )}
@@ -331,10 +326,10 @@ function FilterSelect({
   label: string;
 }) {
   return (
-    <div>
-      <label className="label mb-1 block">{label}</label>
+    <div className="w-[132px]">
+      <label className="label mb-0.5 block text-[10px]">{label}</label>
       <select
-        className="w-full rounded-sm border border-concrete/30 bg-paper px-2 py-2 text-sm font-sans outline-none"
+        className="w-full rounded-sm border border-concrete/30 bg-paper px-2 py-1.5 text-sm font-sans outline-none"
         value={value}
         onChange={(e) => onChange(e.target.value)}
       >
