@@ -97,14 +97,14 @@ export const api = {
     get: (id: string) => get<BackendOpportunity>(`/v1/opportunities/${id}`),
     screen: (id: string, founderId?: string) =>
       post<BackendOpportunity>(
-        `/v1/opportunities/${id}/screen${founderId ? `?founder_id=${founderId}` : ""}`
+        `/v1/opportunities/${id}/screen${founderId ? `?founder_id=${encodeURIComponent(founderId)}` : ""}`
       ),
     diligence: (id: string) => get<BackendClaim[]>(`/v1/opportunities/${id}/diligence`),
     uploadDeck: (id: string, file: File, founderId?: string) => {
       const formData = new FormData();
       formData.append("file", file);
-      if (founderId) formData.append("founder_id", founderId);
-      return postForm<UploadDeckResponse>(`/v1/opportunities/${id}/deck`, formData);
+      const query = founderId ? `?founder_id=${encodeURIComponent(founderId)}` : "";
+      return postForm<UploadDeckResponse>(`/v1/opportunities/${id}/deck${query}`, formData);
     },
   },
 

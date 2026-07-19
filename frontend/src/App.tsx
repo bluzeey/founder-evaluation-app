@@ -73,7 +73,7 @@ function App() {
               {NAV.find((n) => location.pathname.startsWith(n.path))?.label || "Workspace"}
             </div>
             <div className="text-xs text-concrete">
-              Demo environment · Synthetic data
+              Demo + live backend data
             </div>
           </header>
 
