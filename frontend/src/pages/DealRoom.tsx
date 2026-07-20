@@ -10,19 +10,17 @@ import { useAdaptivePolling } from "@/hooks/useAdaptivePolling";
 import type {
   BackendOpportunity,
   BackendFounder,
-    BackendClaim,
-    BackendScoreSnapshot,
-    BackendDimensionBreakdown,
-    BackendFounderScreeningProfile,
-    ApiError,
-  } from "@/types/backend";
+  BackendClaim,
+  BackendScoreSnapshot,
+  BackendFounderScreeningProfile,
+  ApiError,
+} from "@/types/backend";
 import type { CaseStatus } from "@/domain/types";
 
 export default function DealRoom() {
   const { caseId } = useParams<{ caseId: string }>();
   const [opportunity, setOpportunity] = useState<BackendOpportunity | null>(null);
   const [founder, setFounder] = useState<BackendFounder | null>(null);
-  const [snapshot, setSnapshot] = useState<BackendScoreSnapshot | null>(null);
   const [screeningProfile, setScreeningProfile] = useState<BackendFounderScreeningProfile | null>(null);
   const [claims, setClaims] = useState<BackendClaim[]>([]);
   const [loading, setLoading] = useState(false);
@@ -30,7 +28,6 @@ export default function DealRoom() {
   const [error, setError] = useState<string | null>(null);
   const [estimating, setEstimating] = useState(false);
   const [enriching, setEnriching] = useState(false);
-  const [enrichStage, setEnrichStage] = useState<string>("");
   const estimateTriggeredRef = useRef<string | null>(null);
   const estimateStartedAt = useRef(0);
   const enrichStartedAt = useRef(0);
@@ -43,9 +40,6 @@ export default function DealRoom() {
     if (enriching) enrichStartedAt.current = Date.now();
   }, [enriching]);
 
-  // Initial load: fetch the opportunity and diligence claims in parallel
-  // (diligence has no data dependency on the opportunity), then fetch the
-  // founder + score snapshot. Auto-trigger enrichment on cold start.
   useEffect(() => {
     if (!caseId) return;
     let cancelled = false;
@@ -62,11 +56,12 @@ export default function DealRoom() {
         setClaims(c);
         const [f, snap] = await Promise.all([
           api.founders.get(opp.founder_id),
-          api.founders.score(opp.founder_id),
+          api.founders.score(opp.founder_id).catch(() => null as BackendScoreSnapshot | null),
         ]);
         if (cancelled) return;
         if (f) setFounder(f);
-        setSnapshot(snap);
+        // snap is used below for cold-start check — no state needed since
+        // the legacy Evidence Engine display was removed.
         try {
           const profile = await api.founders.screeningProfile(opp.founder_id);
           if (!cancelled) setScreeningProfile(profile);
@@ -74,12 +69,7 @@ export default function DealRoom() {
           if (!cancelled) setScreeningProfile(null);
         }
 
-        // Auto-trigger the full enrichment pipeline when the founder is at
-        // cold-start (0% confidence, all dimensions unknown). The pipeline
-        // runs social research → deep web research → AI estimate via Celery;
-        // a separate effect polls enrichment runs + the score until the
-        // confidence crosses the threshold.
-        const isColdStart = snap.overall_confidence <= 0;
+        const isColdStart = !snap || snap.overall_confidence <= 0;
         if (
           isColdStart &&
           f &&
@@ -91,10 +81,9 @@ export default function DealRoom() {
             await api.founders.enrich(f.id);
             if (!cancelled) {
               setEnriching(true);
-              setEnrichStage("social");
             }
           } catch {
-            // ignore — the backend may also auto-queue from the diligence endpoint
+            // ignore
           }
         }
       } catch (err) {
@@ -108,15 +97,11 @@ export default function DealRoom() {
     };
   }, [caseId]);
 
-  // Diligence poll: refresh claims every 10s while the DealRoom is open.
-  // Pauses when the tab is hidden.
   useAdaptivePolling(() => {
     if (!caseId) return;
     api.opportunities.diligence(caseId).then(setClaims).catch(() => {});
   }, caseId ? 10000 : 0);
 
-  // Poll the founder score while an AI estimate is running. Stops once the
-  // confidence rises above 0 (estimate landed) or after ~60s (timeout).
   useAdaptivePolling(async () => {
     if (!estimating || !founder || !caseId) return;
     if (Date.now() - estimateStartedAt.current > 60000) {
@@ -125,11 +110,8 @@ export default function DealRoom() {
     }
     try {
       const snap = await api.founders.score(founder.id);
-      setSnapshot(snap);
       if (snap.overall_confidence > 0) {
         setEstimating(false);
-        // Invalidate the cached opportunity so the header score/confidence
-        // reflect the freshly-landed estimate.
         invalidateCache(`/v1/opportunities/${caseId}`);
         try {
           const opp = await api.opportunities.get(caseId);
@@ -139,13 +121,10 @@ export default function DealRoom() {
         }
       }
     } catch {
-      // ignore polling errors
+      // ignore
     }
   }, estimating ? 3000 : 0);
 
-  // Poll enrichment runs + score while the 3-stage pipeline is running.
-  // Stops once confidence crosses the enrichment threshold (0.30) or after
-  // ~90s (timeout).
   useAdaptivePolling(async () => {
     if (!enriching || !founder || !caseId) return;
     if (Date.now() - enrichStartedAt.current > 90000) {
@@ -153,20 +132,7 @@ export default function DealRoom() {
       return;
     }
     try {
-      const [runs, snap] = await Promise.all([
-        api.enrichment.runs(founder.id),
-        api.founders.score(founder.id),
-      ]);
-      setSnapshot(snap);
-      // Derive the current stage from the most recent running run.
-      const running = runs.find((r) => r.status === "running");
-      if (running) {
-        setEnrichStage(running.stage);
-      } else {
-        const latest = runs[0];
-        if (latest) setEnrichStage(latest.stage);
-      }
-      // Stop once the confidence crosses the enrichment threshold.
+      const snap = await api.founders.score(founder.id);
       if (snap.overall_confidence >= 0.3) {
         setEnriching(false);
         invalidateCache(`/v1/opportunities/${caseId}`);
@@ -178,7 +144,7 @@ export default function DealRoom() {
         }
       }
     } catch {
-      // ignore polling errors
+      // ignore
     }
   }, enriching ? 3000 : 0);
 
@@ -207,14 +173,12 @@ export default function DealRoom() {
     <LiveOpportunityView
       opportunity={opportunity}
       founder={founder}
-      snapshot={snapshot}
       screeningProfile={screeningProfile}
       claims={claims}
       uploading={uploading}
       setUploading={setUploading}
-      estimating={estimating}
       enriching={enriching}
-      enrichStage={enrichStage}
+      estimating={estimating}
     />
   );
 }
@@ -229,73 +193,6 @@ function SocialLink({ href, icon: Icon, label }: { href: string; icon: typeof Li
     >
       <Icon size={14} /> {label}
     </a>
-  );
-}
-
-function isEstimateOnly(
-  breakdown: BackendDimensionBreakdown,
-  snapshot: BackendScoreSnapshot | null
-) {
-  if (!snapshot) return false;
-  const items = snapshot.evidence_items.filter((item) => item.dimension === breakdown.dimension);
-  if (items.length === 0) return false;
-  return items.every((item) => item.evidence_type === "inferred_estimate");
-}
-
-function stageLabel(stage: string): string {
-  switch (stage) {
-    case "social":
-      return "stage 1/3 social";
-    case "deep_web":
-      return "stage 2/3 web research";
-    case "estimate":
-      return "stage 3/3 estimate";
-    default:
-      return stage ? `stage ${stage}` : "starting";
-  }
-}
-
-function DimensionCard({
-  breakdown,
-  snapshot,
-}: {
-  breakdown: BackendDimensionBreakdown;
-  snapshot: BackendScoreSnapshot | null;
-}) {
-  const name = breakdown.dimension
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
-  return (
-    <div className="rounded-sm border border-concrete/20 bg-paper p-3 space-y-2">
-      <div className="flex items-center justify-between gap-2">
-        <div className="label">{name}</div>
-        <div className="flex items-center gap-1">
-          {breakdown.unknown && (
-            <span className="rounded-sm bg-concrete/10 px-1.5 py-0.5 text-[10px] font-medium uppercase text-concrete">
-              Unknown
-            </span>
-          )}
-          {!breakdown.unknown && isEstimateOnly(breakdown, snapshot) && (
-            <span className="rounded-sm bg-action/10 px-1.5 py-0.5 text-[10px] font-medium uppercase text-action">
-              AI estimate
-            </span>
-          )}
-        </div>
-      </div>
-      <div className="font-display text-xl font-bold tabular text-ink">
-        {breakdown.unknown ? "—" : `${Math.round(breakdown.adjusted_score)} / 100`}
-      </div>
-      <div className="text-xs text-concrete">
-        Confidence: {Math.round(breakdown.confidence * 100)}% · Evidence: {breakdown.evidence_count}
-        {breakdown.contradiction_count > 0 && ` · Contradictions: ${breakdown.contradiction_count}`}
-      </div>
-      {breakdown.next_test && (
-        <div className="text-xs text-action">Next: {breakdown.next_test}</div>
-      )}
-      {breakdown.unknowns.length > 0 && (
-        <div className="text-xs text-concrete">{breakdown.unknowns[0]}</div>
-      )}
-    </div>
   );
 }
 
@@ -348,26 +245,22 @@ function ListBlock({ label, items }: { label: string; items: string[] }) {
 function LiveOpportunityView({
   opportunity,
   founder,
-  snapshot,
   screeningProfile,
   claims,
   uploading,
   setUploading,
   estimating,
   enriching,
-  enrichStage,
   onStatusUpdated,
 }: {
   opportunity: BackendOpportunity;
   founder: BackendFounder | null;
-  snapshot: BackendScoreSnapshot | null;
   screeningProfile: BackendFounderScreeningProfile | null;
   claims: BackendClaim[];
   uploading: boolean;
   setUploading: (v: boolean) => void;
   estimating: boolean;
   enriching: boolean;
-  enrichStage: string;
   onStatusUpdated?: (opp: BackendOpportunity) => void;
 }) {
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -388,27 +281,36 @@ function LiveOpportunityView({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div className="flex items-center gap-2">
         <Link to="/cases" className="text-sm text-action hover:underline">
           <ArrowLeft size={16} className="inline" /> Cases
         </Link>
       </div>
 
-      <div className="panel space-y-4 border-manila-dark/30 bg-manila/20">
+      {/* Compact header */}
+      <div className="panel space-y-3 border-manila-dark/30 bg-manila/20">
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-bold text-ink">
-                {founder?.current_company || founder?.name || "Untitled opportunity"}
+                {screeningProfile?.project_name || founder?.current_company || founder?.name || "Untitled"}
               </h1>
-              <span className="rounded-sm bg-action/10 px-1.5 py-0.5 text-[10px] font-mono font-semibold uppercase text-action">
-                Live
-              </span>
+              {enriching && (
+                <span className="inline-flex items-center gap-1 rounded-sm border border-action/30 bg-action/10 px-1.5 py-0.5 text-[10px] font-mono font-medium text-action">
+                  <Loader2 size={10} className="animate-spin" /> Enriching
+                </span>
+              )}
+              {estimating && (
+                <span className="inline-flex items-center gap-1 rounded-sm border border-action/30 bg-action/10 px-1.5 py-0.5 text-[10px] font-mono font-medium text-action">
+                  <Loader2 size={10} className="animate-spin" /> Estimating
+                </span>
+              )}
             </div>
             <p className="text-sm text-concrete">
-              {founder?.name ?? opportunity.founder_id} · Backend opportunity · Score{" "}
-              {Math.round(opportunity.founder_score)}/100
+              {founder?.name ?? opportunity.founder_id}
+              {screeningProfile?.institution_or_program ? ` · ${screeningProfile.institution_or_program}` : ""}
+              {screeningProfile?.cohort_year ? ` · ${screeningProfile.cohort_year}` : ""}
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               {founder?.linkedin_url && (
@@ -417,45 +319,33 @@ function LiveOpportunityView({
               {founder?.github_url && (
                 <SocialLink href={founder.github_url} icon={Github} label="GitHub" />
               )}
+              {screeningProfile?.website_url && (
+                <SocialLink href={screeningProfile.website_url} icon={ArrowLeft} label="Website" />
+              )}
             </div>
           </div>
           <CaseStatusBadge status={(opportunity.status as CaseStatus) || "SCREENING"} />
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-sm border border-concrete/20 bg-paper p-3">
-            <div className="label">Founder score</div>
-            <div className="font-display text-xl font-bold tabular text-ink">
-              {Math.round(opportunity.founder_score)}
-            </div>
-          </div>
-          <div className="rounded-sm border border-concrete/20 bg-paper p-3">
-            <div className="label">Confidence</div>
-            <div className="font-display text-xl font-bold tabular text-ink">
-              {Math.round(opportunity.founder_confidence * 100)}%
-            </div>
-          </div>
-          <div className="rounded-sm border border-concrete/20 bg-paper p-3">
-            <div className="label">Market posture</div>
-            <div className="text-sm font-semibold text-ink capitalize">{opportunity.market_posture}</div>
-          </div>
-          <div className="rounded-sm border border-concrete/20 bg-paper p-3">
-            <div className="label">Idea vs market</div>
-            <div className="text-sm font-semibold text-ink capitalize">{opportunity.idea_vs_market_posture}</div>
-          </div>
+        {/* Score strip — first thing visible */}
+        <FourScoreStrip profile={screeningProfile} />
+
+        <div className="flex items-center gap-3 border-t border-concrete/10 pt-3 text-sm text-concrete">
+          <RecommendationBadge trigger={screeningProfile?.recommendation_trigger} />
+          <span>{screeningProfile?.recommended_reason || "Not evaluated"}</span>
         </div>
 
-        <div className="border-t border-concrete/10 pt-3 text-sm text-concrete">
-          <span className="font-semibold text-ink">Next action:</span>{" "}
-          {screeningProfile?.next_diligence_action || opportunity.next_founder_action || "Review opportunity details"}
-        </div>
+        {screeningProfile?.next_diligence_action && (
+          <div className="rounded-sm border border-action/20 bg-action/5 p-3 text-sm text-ink/80">
+            <span className="font-semibold text-ink">Next diligence action:</span>{" "}
+            {screeningProfile.next_diligence_action}
+          </div>
+        )}
       </div>
 
-      <div className="panel space-y-4">
+      {/* Pipeline actions */}
+      <div className="panel space-y-3">
         <h3 className="font-display text-lg font-semibold text-ink">Pipeline actions</h3>
-        <p className="text-sm text-concrete">
-          Move this case into the decision queue or update its status as calls progress.
-        </p>
         <CaseStatusActions
           opportunityId={opportunity.opportunity_id}
           status={(opportunity.status as CaseStatus) || "SCREENING"}
@@ -463,10 +353,41 @@ function LiveOpportunityView({
         />
       </div>
 
-      <div className="panel space-y-3">
+      {/* Associate Screen — score breakdown cards */}
+      {screeningProfile && (
+        <div className="panel space-y-4">
+          <h3 className="font-display text-lg font-semibold text-ink">Associate Screen</h3>
+          <div className="grid gap-3 lg:grid-cols-2">
+            <AssociateScreenCard title="Founder" score={screeningProfile.founder_score} rationale={screeningProfile.founder_score_rationale} profile={screeningProfile} />
+            <AssociateScreenCard title="Vision & Product" score={screeningProfile.vision_product_score} rationale={screeningProfile.vision_product_rationale} profile={screeningProfile} />
+            <AssociateScreenCard title="Differentiation" score={screeningProfile.differentiation_score} rationale={screeningProfile.differentiation_rationale} profile={screeningProfile} />
+            <AssociateScreenCard title="Traction" score={screeningProfile.traction_score} rationale={screeningProfile.traction_rationale} profile={screeningProfile} />
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-2">
+            <div className="rounded-sm border border-concrete/20 bg-paper p-3 text-sm text-ink/80">
+              <div className="label mb-2">Provenance</div>
+              <div>Source: {screeningProfile.primary_source_url || "—"}</div>
+              <div>Locator: {screeningProfile.source_locator || "—"}</div>
+              <div>Evaluation scope: {screeningProfile.evaluation_scope || "—"}</div>
+              <div>Individual attribution confidence: {screeningProfile.individual_attribution_confidence !== undefined ? `${Math.round(screeningProfile.individual_attribution_confidence * 100)}%` : "—"}</div>
+            </div>
+            <div className="rounded-sm border border-concrete/20 bg-paper p-3 text-sm text-ink/80">
+              <div className="label mb-2">Funding screen</div>
+              <div>{screeningProfile.funding_status.replace(/_/g, " ")}</div>
+              <div>As of {screeningProfile.funding_check_as_of || "—"}</div>
+              <div>Confidence {screeningProfile.funding_check_confidence !== undefined ? `${Math.round(screeningProfile.funding_check_confidence * 100)}%` : "—"}</div>
+              <div className="mt-2">{screeningProfile.funding_notes || "No funding notes available."}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Source signal */}
+      <div className="panel space-y-2">
         <h3 className="font-display text-lg font-semibold text-ink">Source signal</h3>
         <p className="text-sm font-medium text-ink">
-          {founder?.source_reason || "No reason provided."}
+          {founder?.source_reason || screeningProfile?.project_summary || "No summary available."}
         </p>
         {founder?.source_url && (
           <a
@@ -480,81 +401,7 @@ function LiveOpportunityView({
         )}
       </div>
 
-      <div className="panel space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h3 className="font-display text-lg font-semibold text-ink">Associate Screen</h3>
-            <p className="text-sm text-concrete">
-              Founder, Vision &amp; Product, Differentiation, and Traction stay independent. No final weighted score is shown here.
-            </p>
-          </div>
-          <RecommendationBadge trigger={screeningProfile?.recommendation_trigger} />
-        </div>
-
-        {screeningProfile ? (
-          <>
-            <FourScoreStrip profile={screeningProfile} />
-            <div className="grid gap-3 lg:grid-cols-2">
-              <AssociateScreenCard title="Founder" score={screeningProfile.founder_score} rationale={screeningProfile.founder_score_rationale} profile={screeningProfile} />
-              <AssociateScreenCard title="Vision & Product" score={screeningProfile.vision_product_score} rationale={screeningProfile.vision_product_rationale} profile={screeningProfile} />
-              <AssociateScreenCard title="Differentiation" score={screeningProfile.differentiation_score} rationale={screeningProfile.differentiation_rationale} profile={screeningProfile} />
-              <AssociateScreenCard title="Traction" score={screeningProfile.traction_score} rationale={screeningProfile.traction_rationale} profile={screeningProfile} />
-            </div>
-
-            <div className="grid gap-3 lg:grid-cols-2">
-              <div className="rounded-sm border border-concrete/20 bg-paper p-3 text-sm text-ink/80">
-                <div className="label mb-2">Provenance</div>
-                <div>Trigger: {screeningProfile.recommendation_trigger}</div>
-                <div>Source: {screeningProfile.primary_source_url || "—"}</div>
-                <div>Locator: {screeningProfile.source_locator || "—"}</div>
-                <div>Evaluation scope: {screeningProfile.evaluation_scope || "—"}</div>
-                <div>Individual attribution confidence: {screeningProfile.individual_attribution_confidence !== undefined ? `${Math.round(screeningProfile.individual_attribution_confidence * 100)}%` : "—"}</div>
-              </div>
-              <div className="rounded-sm border border-concrete/20 bg-paper p-3 text-sm text-ink/80">
-                <div className="label mb-2">Funding screen</div>
-                <div>{screeningProfile.funding_status.replace(/_/g, " ")}</div>
-                <div>As of {screeningProfile.funding_check_as_of || "—"}</div>
-                <div>Confidence {screeningProfile.funding_check_confidence !== undefined ? `${Math.round(screeningProfile.funding_check_confidence * 100)}%` : "—"}</div>
-                <div className="mt-2">{screeningProfile.funding_notes || "No funding notes available."}</div>
-              </div>
-            </div>
-
-            <div className="rounded-sm border border-action/20 bg-action/5 p-3 text-sm text-ink/80">
-              <span className="font-semibold text-ink">Next diligence action:</span>{" "}
-              {screeningProfile.next_diligence_action || "—"}
-            </div>
-          </>
-        ) : (
-          <div className="text-sm text-concrete">Not evaluated.</div>
-        )}
-      </div>
-
-      <details className="panel">
-        <summary className="font-display text-lg font-semibold text-ink">Evidence Engine (legacy)</summary>
-        <div className="mt-4 space-y-4">
-          <div className="flex items-center justify-between">
-          {enriching ? (
-            <span className="inline-flex items-center gap-1.5 rounded-sm border border-action/30 bg-action/10 px-2 py-1 text-xs font-mono font-medium text-action">
-              <Loader2 size={12} className="animate-spin" /> Enriching ({stageLabel(enrichStage)})…
-            </span>
-          ) : estimating ? (
-            <span className="inline-flex items-center gap-1.5 rounded-sm border border-action/30 bg-action/10 px-2 py-1 text-xs font-mono font-medium text-action">
-              <Loader2 size={12} className="animate-spin" /> Estimating score…
-            </span>
-          ) : null}
-          </div>
-          {snapshot ? (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {snapshot.dimension_breakdowns.map((bd) => (
-                <DimensionCard key={bd.dimension} breakdown={bd} snapshot={snapshot} />
-              ))}
-            </div>
-          ) : (
-            <div className="text-sm text-concrete">No score snapshot available yet.</div>
-          )}
-        </div>
-      </details>
-
+      {/* Diligence claims */}
       <div className="panel space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="font-display text-lg font-semibold text-ink">Diligence claims</h3>
@@ -605,42 +452,6 @@ function LiveOpportunityView({
             ))}
           </div>
         )}
-      </div>
-
-      <div className="panel space-y-4">
-        <h3 className="font-display text-lg font-semibold text-ink">Founder-market fit</h3>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {Object.entries(opportunity.founder_market_fit).map(([key, value]) => {
-            if (typeof value !== "number" || key === "confidence" || key === "coverage") return null;
-            return (
-              <div key={key} className="rounded-sm border border-concrete/20 bg-paper p-3">
-                <div className="label">{key.replace(/_/g, " ")}</div>
-                <div className="font-display text-lg font-bold tabular text-ink">{Math.round(value * 100)}%</div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="panel space-y-4">
-        <h3 className="font-display text-lg font-semibold text-ink">Team completeness</h3>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {Object.entries(opportunity.team_completeness).map(([key, value]) => {
-            if (typeof value !== "number" || key === "confidence" || key === "coverage") return null;
-            return (
-              <div key={key} className="rounded-sm border border-concrete/20 bg-paper p-3">
-                <div className="label">{key.replace(/_/g, " ")}</div>
-                <div className="font-display text-lg font-bold tabular text-ink">{Math.round(value * 100)}%</div>
-              </div>
-            );
-          })}
-        </div>
-        {opportunity.team_completeness.missing_critical_roles &&
-          opportunity.team_completeness.missing_critical_roles.length > 0 && (
-            <div className="text-sm text-concrete">
-              Missing roles: {opportunity.team_completeness.missing_critical_roles.join(", ")}
-            </div>
-          )}
       </div>
     </div>
   );
