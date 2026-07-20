@@ -306,6 +306,7 @@ def _apply_social_background(db: Session, founder_id: str) -> Optional[SocialMed
 def _build_founder_discovery_page(
     db: Session,
     *,
+    include_unscreened: bool = False,
     q: Optional[str] = None,
     recommended: Optional[bool] = None,
     city: Optional[str] = None,
@@ -327,6 +328,7 @@ def _build_founder_discovery_page(
 
     items = crud.list_founder_discovery_items(
         db,
+        include_unscreened=include_unscreened,
         q=q,
         recommended=recommended,
         city=city,
@@ -343,6 +345,7 @@ def _build_founder_discovery_page(
     )
     total = crud.count_founder_discovery_items(
         db,
+        include_unscreened=include_unscreened,
         q=q,
         recommended=recommended,
         city=city,
@@ -356,6 +359,7 @@ def _build_founder_discovery_page(
     )
     facets = crud.get_founder_discovery_facets(
         db,
+        include_unscreened=include_unscreened,
         q=q,
         recommended=recommended,
         city=city,
@@ -372,6 +376,7 @@ def _build_founder_discovery_page(
 
 @app.get("/v1/founders/discovery", response_model=FounderDiscoveryPage)
 def founder_discovery(
+    include_unscreened: bool = False,
     q: Optional[str] = None,
     recommended: Optional[bool] = None,
     city: Optional[str] = None,
@@ -389,6 +394,7 @@ def founder_discovery(
 ):
     page = _build_founder_discovery_page(
         db,
+        include_unscreened=include_unscreened,
         q=q,
         recommended=recommended,
         city=city,
@@ -416,6 +422,7 @@ def founder_discovery(
 
 @app.get("/v1/founders/recommended", response_model=FounderDiscoveryPage)
 def recommended_founders(
+    include_unscreened: bool = False,
     q: Optional[str] = None,
     city: Optional[str] = None,
     country: Optional[str] = None,
@@ -432,6 +439,7 @@ def recommended_founders(
 ):
     return _build_founder_discovery_page(
         db,
+        include_unscreened=include_unscreened,
         q=q,
         recommended=True,
         city=city,
@@ -1322,7 +1330,7 @@ def seed_demo(db: Session = Depends(get_db)):
             name="Early-stage B2B SaaS",
             sectors=["B2B SaaS", "AI Infrastructure"],
             stages=["pre-seed", "seed"],
-            geographies=["India", "Europe"],
+            geographies=["United States"],
             check_size_min=250_000,
             check_size_max=1_500_000,
             risk_appetite="moderate",
@@ -1341,7 +1349,7 @@ def seed_demo(db: Session = Depends(get_db)):
     default_schedule = SourcingSchedule(
         id=schedule_id,
         thesis_id=thesis.id,
-        enabled=True,
+        enabled=False,
         interval_seconds=seed_data.DEFAULT_SOURCING_INTERVAL_SECONDS,
         max_leads_per_run=10,
         sources=default_sources,
@@ -1407,7 +1415,7 @@ def seed_all(db: Session = Depends(get_db)):
             schedule = SourcingSchedule(
                 id=schedule_id,
                 thesis_id=thesis_id,
-                enabled=True,
+                enabled=False,
                 interval_seconds=seed_data.DEFAULT_SOURCING_INTERVAL_SECONDS,
                 max_leads_per_run=10,
                 sources=sources,

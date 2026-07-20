@@ -28,6 +28,8 @@ from tasks.social_research import research_social_background, store_social_backg
 
 logger = logging.getLogger(__name__)
 
+US_ONLY_SOURCING_GEOGRAPHIES = ["United States"]
+
 REDIS_URL = os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
 POOL_LOCK_KEY = "founder_pool_refresh_lock"
 POOL_LOCK_TTL_SECONDS = int(os.environ.get("POOL_LOCK_TTL_SECONDS", "300"))
@@ -232,7 +234,7 @@ def refresh_founder_pool(
     """
     sectors = sectors or ["B2B SaaS", "AI Infrastructure"]
     stages = stages or ["pre-seed", "seed"]
-    geographies = geographies or ["Global"]
+    geographies = US_ONLY_SOURCING_GEOGRAPHIES.copy()
 
     logger.info(
         "founder_pool.refresh.start sectors=%s stages=%s geographies=%s risk=%s sources=%s thesis_id=%s job_id=%s",

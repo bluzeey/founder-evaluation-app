@@ -64,6 +64,7 @@ def test_discovery_and_recommended_filters_and_ordering(client):
     founder_a = _create_founder(client, "Ada Alpha", "ada.alpha@test.example")
     founder_b = _create_founder(client, "Bea Beta", "bea.beta@test.example")
     founder_c = _create_founder(client, "Cam Gamma", "cam.gamma@test.example")
+    _create_founder(client, "Unaudited Founder", "unaudited@test.example")
 
     _put_profile(client, founder_a["id"], founder_score=88, founder_score_rationale="A", evidence_confidence=0.9)
     _put_profile(
@@ -95,6 +96,10 @@ def test_discovery_and_recommended_filters_and_ordering(client):
     body = discovery.json()
     assert body["total"] == 3
     assert all(item["profile"]["city_basis"] == "program_location_not_verified_residence" for item in body["items"])
+
+    discovery_with_unscreened = client.get("/v1/founders/discovery?include_unscreened=true")
+    assert discovery_with_unscreened.status_code == 200
+    assert discovery_with_unscreened.json()["total"] == 4
 
     recommended = client.get("/v1/founders/recommended")
     assert recommended.status_code == 200

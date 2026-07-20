@@ -329,6 +329,7 @@ def create_or_update_screening_profile(
 def _build_founder_discovery_query(
     db: Session,
     evaluation_version: str = "associate_screen_v1",
+    include_unscreened: bool = False,
     q: Optional[str] = None,
     recommended: Optional[bool] = None,
     city: Optional[str] = None,
@@ -350,6 +351,8 @@ def _build_founder_discovery_query(
             ),
         )
     )
+    if not include_unscreened:
+        query = query.filter(db_models.FounderScreeningProfile.id.is_not(None))
     if recommended is True:
         query = query.filter(db_models.FounderScreeningProfile.recommended.is_(True))
     elif recommended is False:
@@ -449,6 +452,7 @@ def _recommended_order_columns():
 def get_founder_discovery_facets(
     db: Session,
     evaluation_version: str = "associate_screen_v1",
+    include_unscreened: bool = False,
     q: Optional[str] = None,
     recommended: Optional[bool] = None,
     city: Optional[str] = None,
@@ -463,6 +467,7 @@ def get_founder_discovery_facets(
     query = _build_founder_discovery_query(
         db,
         evaluation_version=evaluation_version,
+        include_unscreened=include_unscreened,
         q=q,
         recommended=recommended,
         city=city,
@@ -500,6 +505,7 @@ def get_founder_discovery_facets(
 def list_founder_discovery_items(
     db: Session,
     evaluation_version: str = "associate_screen_v1",
+    include_unscreened: bool = False,
     q: Optional[str] = None,
     recommended: Optional[bool] = None,
     city: Optional[str] = None,
@@ -517,6 +523,7 @@ def list_founder_discovery_items(
     query = _build_founder_discovery_query(
         db,
         evaluation_version=evaluation_version,
+        include_unscreened=include_unscreened,
         q=q,
         recommended=recommended,
         city=city,
@@ -562,6 +569,7 @@ def list_founder_discovery_items(
 def count_founder_discovery_items(
     db: Session,
     evaluation_version: str = "associate_screen_v1",
+    include_unscreened: bool = False,
     q: Optional[str] = None,
     recommended: Optional[bool] = None,
     city: Optional[str] = None,
@@ -576,6 +584,7 @@ def count_founder_discovery_items(
     return _build_founder_discovery_query(
         db,
         evaluation_version=evaluation_version,
+        include_unscreened=include_unscreened,
         q=q,
         recommended=recommended,
         city=city,

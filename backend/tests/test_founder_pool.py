@@ -53,6 +53,8 @@ def test_refresh_pool_adds_recommendations(mock_agent_cls):
     assert len(pool) == 1
     assert pool[0].name == "Alice Smith"
     assert pool[0].status == PoolItemStatus.RECOMMENDED
+    mock_agent.discover.assert_called_once()
+    assert mock_agent.discover.call_args.kwargs["geographies"] == ["United States"]
 
 
 @patch("main.refresh_pool_task")
