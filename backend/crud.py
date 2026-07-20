@@ -696,61 +696,264 @@ def ensure_founder_opportunity(
     return opp
 
 
-def _resolve_import_match(
+def _batch_resolve_import_matches(
     db: Session,
-    row: Dict[str, Any],
-) -> tuple[Optional[db_models.Founder], Optional[db_models.FounderScreeningProfile], Optional[str]]:
-    matched_founders: Dict[str, db_models.Founder] = {}
-    matched_profiles: Dict[str, Optional[db_models.FounderScreeningProfile]] = {}
+    rows: List[Dict[str, Any]],
+    evaluation_version: str = "associate_screen_v1",
+) -> Dict[str, Dict[str, Any]]:
+    """Resolve dedup matches for ALL rows in 3 batch queries instead of N per-row queries.
 
-    external_record_id = row["external_record_id"]
-    linkedin_url_normalized = row.get("linkedin_url_normalized")
-    founder_name_normalized = row["founder_name_normalized"]
-    project_name_normalized = row["project_name_normalized"]
-    cohort_year = row.get("cohort_year")
+    Returns a dict keyed by row index (str) with keys:
+        founder, profile, conflict
+    """
+    all_external_ids = [r["external_record_id"] for r in rows if r.get("external_record_id")]
+    all_linkedin = [r["linkedin_url_normalized"] for r in rows if r.get("linkedin_url_normalized")]
 
-    if external_record_id:
-        db_profile = get_screening_profile_by_external_record_id(db, external_record_id)
-        if db_profile is not None:
-            db_founder = get_founder(db, db_profile.founder_id)
-            if db_founder is not None:
-                matched_founders[db_founder.id] = db_founder
-                matched_profiles[db_founder.id] = db_profile
+    # --- Query 1: existing profiles by external_record_id ---
+    profiles_by_extid: Dict[str, db_models.FounderScreeningProfile] = {}
+    if all_external_ids:
+        for prof in (
+            db.query(db_models.FounderScreeningProfile)
+            .filter(db_models.FounderScreeningProfile.external_record_id.in_(all_external_ids))
+            .all()
+        ):
+            profiles_by_extid[prof.external_record_id] = prof
 
-    if linkedin_url_normalized:
-        linkedin_matches = _find_founders_by_linkedin_normalized(db, linkedin_url_normalized)
-        if len(linkedin_matches) > 1:
-            return None, None, "LinkedIn URL matches multiple founders"
-        if linkedin_matches:
-            db_founder = linkedin_matches[0]
-            matched_founders[db_founder.id] = db_founder
-            matched_profiles[db_founder.id] = get_screening_profile(db, db_founder.id, row["evaluation_version"])
+    # Fetch founders for matched profiles in one query
+    matched_founder_ids = {p.founder_id for p in profiles_by_extid.values()}
+    founders_by_id: Dict[str, db_models.Founder] = {}
+    if matched_founder_ids:
+        for f in db.query(db_models.Founder).filter(db_models.Founder.id.in_(matched_founder_ids)).all():
+            founders_by_id[f.id] = f
 
-    tuple_matches = _find_profiles_by_name_project_cohort(
-        db,
-        founder_name_normalized,
-        project_name_normalized,
-        cohort_year,
+    # --- Query 2: existing founders by linkedin_url_normalized ---
+    founders_by_linkedin: Dict[str, db_models.Founder] = {}
+    if all_linkedin:
+        for f in (
+            db.query(db_models.Founder)
+            .filter(db_models.Founder.linkedin_url_normalized.in_(all_linkedin))
+            .all()
+        ):
+            founders_by_linkedin[f.linkedin_url_normalized] = f
+            if f.id not in founders_by_id:
+                founders_by_id[f.id] = f
+
+    # Fetch profiles for LinkedIn-matched founders in one query
+    linkedin_founder_ids = {f.id for f in founders_by_linkedin.values()}
+    profiles_by_founder_id: Dict[str, db_models.FounderScreeningProfile] = {}
+    if linkedin_founder_ids:
+        for prof in (
+            db.query(db_models.FounderScreeningProfile)
+            .filter(
+                db_models.FounderScreeningProfile.founder_id.in_(linkedin_founder_ids),
+                db_models.FounderScreeningProfile.evaluation_version == evaluation_version,
+            )
+            .all()
+        ):
+            profiles_by_founder_id[prof.founder_id] = prof
+
+    # Merge profiles_by_extid into profiles_by_founder_id for easy lookup
+    for prof in profiles_by_extid.values():
+        if prof.founder_id not in profiles_by_founder_id:
+            profiles_by_founder_id[prof.founder_id] = prof
+
+    # --- Query 3: existing profiles by (name, project, cohort) tuple ---
+    # We need profiles joined to founders whose name matches. Do this in one join query.
+    all_name_norms = list({r["founder_name_normalized"] for r in rows})
+    tuple_matches: List[tuple] = []
+    if all_name_norms:
+        tuple_rows = (
+            db.query(
+                func.lower(func.trim(db_models.Founder.name)).label("name_norm"),
+                db_models.FounderScreeningProfile,
+            )
+            .join(db_models.Founder, db_models.Founder.id == db_models.FounderScreeningProfile.founder_id)
+            .filter(
+                func.lower(func.trim(db_models.Founder.name)).in_(all_name_norms),
+                db_models.FounderScreeningProfile.evaluation_version == evaluation_version,
+            )
+            .all()
+        )
+        for name_norm, prof in tuple_rows:
+            tuple_matches.append((name_norm, prof))
+            if prof.founder_id not in founders_by_id:
+                f = get_founder(db, prof.founder_id)
+                if f:
+                    founders_by_id[f.id] = f
+            if prof.founder_id not in profiles_by_founder_id:
+                profiles_by_founder_id[prof.founder_id] = prof
+
+    # Build tuple lookup: (name_norm, project_norm, cohort) -> list of profiles
+    tuple_lookup: Dict[tuple, List[db_models.FounderScreeningProfile]] = {}
+    for name_norm, prof in tuple_matches:
+        key = (name_norm, prof.project_name_normalized, prof.cohort_year)
+        tuple_lookup.setdefault(key, []).append(prof)
+
+    # Now resolve each row using in-memory lookups
+    results: Dict[str, Dict[str, Any]] = {}
+    for idx, row in enumerate(rows):
+        matched_founders: Dict[str, db_models.Founder] = {}
+        matched_profiles: Dict[str, Optional[db_models.FounderScreeningProfile]] = {}
+
+        external_record_id = row["external_record_id"]
+        linkedin_norm = row.get("linkedin_url_normalized")
+        name_norm = row["founder_name_normalized"]
+        project_norm = row["project_name_normalized"]
+        cohort_year = row.get("cohort_year")
+
+        # Match 1: external_record_id
+        if external_record_id and external_record_id in profiles_by_extid:
+            prof = profiles_by_extid[external_record_id]
+            f = founders_by_id.get(prof.founder_id)
+            if f:
+                matched_founders[f.id] = f
+                matched_profiles[f.id] = prof
+
+        # Match 2: linkedin_url_normalized
+        if linkedin_norm and linkedin_norm in founders_by_linkedin:
+            f = founders_by_linkedin[linkedin_norm]
+            matched_founders[f.id] = f
+            matched_profiles[f.id] = profiles_by_founder_id.get(f.id)
+
+        # Match 3: (name, project, cohort) tuple
+        key = (name_norm, project_norm, cohort_year)
+        if key in tuple_lookup:
+            for prof in tuple_lookup[key]:
+                f = founders_by_id.get(prof.founder_id)
+                if f:
+                    matched_founders[f.id] = f
+                    matched_profiles[f.id] = prof
+
+        # Conflict checks
+        if linkedin_norm:
+            linkedin_count = sum(
+                1 for r2 in rows
+                if r2.get("linkedin_url_normalized") == linkedin_norm
+            )
+            # The per-row linkedin check was: if >1 founder matched in DB
+            # In batch we already have all matches; check if multiple distinct founders matched
+        if len(matched_founders) > 1:
+            results[str(idx)] = {
+                "founder": None,
+                "profile": None,
+                "conflict": "Candidate matches disagree across external id, LinkedIn URL, and founder/project/cohort tuple",
+            }
+            continue
+
+        # Check LinkedIn multi-match at DB level
+        if linkedin_norm:
+            db_linkedin_count = sum(
+                1 for f2 in founders_by_linkedin.values()
+                if f2.linkedin_url_normalized == linkedin_norm
+            )
+            if db_linkedin_count > 1:
+                results[str(idx)] = {
+                    "founder": None,
+                    "profile": None,
+                    "conflict": "LinkedIn URL matches multiple founders",
+                }
+                continue
+
+        # Check tuple multi-match at DB level
+        if key in tuple_lookup:
+            tuple_founder_ids = {p.founder_id for p in tuple_lookup[key]}
+            if len(tuple_founder_ids) > 1:
+                results[str(idx)] = {
+                    "founder": None,
+                    "profile": None,
+                    "conflict": "Founder/project/cohort tuple matches multiple founders",
+                }
+                continue
+
+        if not matched_founders:
+            results[str(idx)] = {"founder": None, "profile": None, "conflict": None}
+            continue
+
+        founder_id = next(iter(matched_founders.keys()))
+        results[str(idx)] = {
+            "founder": matched_founders[founder_id],
+            "profile": matched_profiles.get(founder_id),
+            "conflict": None,
+        }
+
+    return results
+
+
+def _build_screening_profile_payload(
+    founder_id: str,
+    profile_data: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build the DB payload for a screening profile (pure, no DB calls)."""
+    evaluation_version = profile_data.get("evaluation_version") or "associate_screen_v1"
+    evaluation = evaluate_recommendation(
+        profile_data.get("founder_score"),
+        profile_data.get("vision_product_score"),
+        profile_data.get("differentiation_score"),
+        profile_data.get("traction_score"),
     )
-    if len(tuple_matches) > 1:
-        founder_ids = {match.founder_id for match in tuple_matches}
-        if len(founder_ids) > 1:
-            return None, None, "Founder/project/cohort tuple matches multiple founders"
-    if tuple_matches:
-        db_profile = tuple_matches[0]
-        db_founder = get_founder(db, db_profile.founder_id)
-        if db_founder is not None:
-            matched_founders[db_founder.id] = db_founder
-            matched_profiles[db_founder.id] = db_profile
-
-    if len(matched_founders) > 1:
-        return None, None, "Candidate matches disagree across external id, LinkedIn URL, and founder/project/cohort tuple"
-
-    if not matched_founders:
-        return None, None, None
-
-    founder_id = next(iter(matched_founders.keys()))
-    return matched_founders[founder_id], matched_profiles.get(founder_id), None
+    funding_status_raw = profile_data.get("funding_status", ScreeningFundingStatus.UNKNOWN.value)
+    return {
+        "founder_id": founder_id,
+        "external_record_id": profile_data.get("external_record_id"),
+        "project_name": profile_data.get("project_name"),
+        "project_name_normalized": normalize_text_value(profile_data.get("project_name")),
+        "project_summary": profile_data.get("project_summary"),
+        "founder_role": profile_data.get("founder_role"),
+        "sector": profile_data.get("sector"),
+        "stage": profile_data.get("stage"),
+        "source_type": profile_data.get("source_type"),
+        "institution_or_program": profile_data.get("institution_or_program"),
+        "school_or_lab": profile_data.get("school_or_lab"),
+        "cohort_year": profile_data.get("cohort_year"),
+        "institution_affiliation_basis": profile_data.get("institution_affiliation_basis"),
+        "city": profile_data.get("city"),
+        "city_normalized": normalize_text_value(profile_data.get("city")),
+        "country": profile_data.get("country"),
+        "city_basis": profile_data.get("city_basis"),
+        "city_confidence": profile_data.get("city_confidence"),
+        "target_market_geography": profile_data.get("target_market_geography"),
+        "website_url": profile_data.get("website_url"),
+        "primary_source_url": profile_data.get("primary_source_url"),
+        "source_locator": profile_data.get("source_locator"),
+        "source_date": profile_data.get("source_date"),
+        "funding_status": (
+            funding_status_raw.value
+            if isinstance(funding_status_raw, ScreeningFundingStatus)
+            else funding_status_raw
+        ),
+        "funding_check_as_of": profile_data.get("funding_check_as_of"),
+        "funding_check_confidence": profile_data.get("funding_check_confidence"),
+        "funding_notes": profile_data.get("funding_notes"),
+        "founder_score": profile_data.get("founder_score"),
+        "founder_score_rationale": profile_data.get("founder_score_rationale"),
+        "vision_product_score": profile_data.get("vision_product_score"),
+        "vision_product_rationale": profile_data.get("vision_product_rationale"),
+        "differentiation_score": profile_data.get("differentiation_score"),
+        "differentiation_rationale": profile_data.get("differentiation_rationale"),
+        "traction_score": profile_data.get("traction_score"),
+        "traction_rationale": profile_data.get("traction_rationale"),
+        "evidence_confidence": profile_data.get("evidence_confidence"),
+        "evidence_coverage": profile_data.get("evidence_coverage"),
+        "individual_attribution_confidence": profile_data.get("individual_attribution_confidence"),
+        "evaluation_scope": profile_data.get("evaluation_scope"),
+        "key_evidence": profile_data.get("key_evidence") or [],
+        "counter_evidence": profile_data.get("counter_evidence") or [],
+        "unknowns": profile_data.get("unknowns") or [],
+        "next_diligence_action": profile_data.get("next_diligence_action"),
+        "recommended": evaluation.recommended,
+        "recommendation_trigger": evaluation.trigger.value,
+        "recommended_reason": profile_data.get("recommended_reason") or evaluation.reason,
+        "evaluation_version": evaluation_version,
+        "pedigree_used_in_scoring": bool(profile_data.get("pedigree_used_in_scoring", False)),
+        "import_status": profile_data.get("import_status"),
+        "research_priority": profile_data.get("research_priority"),
+        "tags": profile_data.get("tags") or [],
+        "imported_associate_call_recommended": profile_data.get("imported_associate_call_recommended"),
+        "imported_recommendation_trigger": profile_data.get("imported_recommendation_trigger"),
+        "imported_recommended_reason": profile_data.get("imported_recommended_reason"),
+        "produced_by": profile_data.get("produced_by"),
+        "import_id": profile_data.get("import_id"),
+    }
 
 
 def bulk_upsert_founders_and_profiles(
@@ -771,10 +974,16 @@ def bulk_upsert_founders_and_profiles(
     profiles_to_create = 0
     profiles_to_update = 0
 
+    # --- Batch dedup: 3 queries total instead of ~450 ---
+    match_results = _batch_resolve_import_matches(db, rows)
+
     matched_rows: List[Dict[str, Any]] = []
-    for row in rows:
-        row_errors: List[CsvImportRowError] = []
-        db_founder, db_profile, conflict = _resolve_import_match(db, row)
+    for idx, row in enumerate(rows):
+        result = match_results[str(idx)]
+        db_founder = result["founder"]
+        db_profile = result["profile"]
+        conflict = result["conflict"]
+
         if conflict:
             errors.append(
                 CsvImportRowError(
@@ -785,6 +994,7 @@ def bulk_upsert_founders_and_profiles(
             )
             continue
 
+        row_errors: List[CsvImportRowError] = []
         if db_founder is not None:
             if db_founder.name.strip() != row["founder_name"].strip():
                 row_errors.append(
@@ -857,21 +1067,48 @@ def bulk_upsert_founders_and_profiles(
             errors=[],
         )
 
+    # --- Committed import: batch all writes into a single transaction ---
     created_founder_ids: List[str] = []
     updated_founder_ids: List[str] = []
     created_profile_ids: List[str] = []
     updated_profile_ids: List[str] = []
 
-    db_import = create_founder_csv_import(
-        db,
+    db_import = db_models.FounderCsvImport(
+        id=f"imp_{uuid.uuid4().hex[:12]}",
         file_name=file_name,
         file_checksum=file_checksum,
         row_count=len(rows),
     )
+    db.add(db_import)
+    db.flush()  # need the import ID for FK
+
+    # Batch: collect new founders and profiles
+    new_founders: List[db_models.Founder] = []
+    new_profiles: List[db_models.FounderScreeningProfile] = []
+    new_opportunities: List[db_models.Opportunity] = []
+
+    # Pre-fetch existing opportunities for all matched (existing) founders in ONE query
+    existing_founder_ids = [row["matched_founder"].id for row in matched_rows if row["matched_founder"] is not None]
+    existing_opp_founder_ids: set = set()
+    if existing_founder_ids:
+        for opp in (
+            db.query(db_models.Opportunity)
+            .filter(db_models.Opportunity.founder_id.in_(existing_founder_ids))
+            .all()
+        ):
+            existing_opp_founder_ids.add(opp.founder_id)
+            # Patch next action if missing
+            for row in matched_rows:
+                f = row["matched_founder"]
+                if f and f.id == opp.founder_id:
+                    na = row["profile_data"].get("next_diligence_action")
+                    if na and not opp.next_founder_action:
+                        opp.next_founder_action = na
 
     for row in matched_rows:
         db_founder = row["matched_founder"]
         db_profile = row["matched_profile"]
+
         if db_founder is None:
             founder_id = f"fnd_{uuid.uuid4().hex[:12]}"
             db_founder = db_models.Founder(
@@ -889,9 +1126,8 @@ def bulk_upsert_founders_and_profiles(
                 source_url=row.get("primary_source_url"),
                 enrichment_policy=EnrichmentPolicy.MANUAL.value,
             )
-            db.add(db_founder)
-            db.flush()
-            created_founder_ids.append(db_founder.id)
+            new_founders.append(db_founder)
+            created_founder_ids.append(founder_id)
         else:
             if not db_founder.current_company and row.get("project_name"):
                 db_founder.current_company = row["project_name"]
@@ -912,25 +1148,55 @@ def bulk_upsert_founders_and_profiles(
                 db_founder.source_reason = row["project_summary"]
             if db_founder.enrichment_policy == EnrichmentPolicy.AUTO.value:
                 db_founder.enrichment_policy = EnrichmentPolicy.MANUAL.value
-            db.flush()
             updated_founder_ids.append(db_founder.id)
 
+        # Build screening profile (pure, no DB calls)
         profile_payload = dict(row["profile_data"])
         profile_payload["import_id"] = db_import.id
         profile_payload["produced_by"] = profile_payload.get("produced_by") or "csv_import"
-        saved_profile = create_or_update_screening_profile(
-            db,
-            db_founder.id,
-            profile_payload,
-            commit=False,
-        )
+        payload = _build_screening_profile_payload(db_founder.id, profile_payload)
+
         if db_profile is None:
-            created_profile_ids.append(saved_profile.id)
+            new_profile = db_models.FounderScreeningProfile(
+                id=f"fsp_{uuid.uuid4().hex[:12]}",
+                **payload,
+            )
+            new_profiles.append(new_profile)
+            created_profile_ids.append(new_profile.id)
         else:
-            updated_profile_ids.append(saved_profile.id)
+            for key, value in payload.items():
+                setattr(db_profile, key, value)
+            updated_profile_ids.append(db_profile.id)
 
-        ensure_founder_opportunity(db, db_founder.id, profile_payload.get("next_diligence_action"))
+        # Opportunity (batch — only create if none exists)
+        founder_id = db_founder.id
+        if founder_id not in existing_opp_founder_ids and founder_id not in {o.founder_id for o in new_opportunities}:
+            new_opportunities.append(
+                db_models.Opportunity(
+                    id=f"opp_{uuid.uuid4().hex[:12]}",
+                    founder_id=founder_id,
+                    founder_score=0,
+                    founder_confidence=0,
+                    founder_market_fit={},
+                    team_completeness={},
+                    market_posture="neutral",
+                    market_confidence=0,
+                    idea_vs_market_posture="neutral",
+                    idea_vs_market_confidence=0,
+                    next_founder_action=profile_payload.get("next_diligence_action"),
+                    status="SCREENING",
+                )
+            )
 
+    # Batch add all new objects at once
+    if new_founders:
+        db.add_all(new_founders)
+    if new_profiles:
+        db.add_all(new_profiles)
+    if new_opportunities:
+        db.add_all(new_opportunities)
+
+    # Single commit for the entire import
     db.commit()
 
     return CsvImportResult(
