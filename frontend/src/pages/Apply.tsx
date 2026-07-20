@@ -1,16 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { FileText, CheckCircle2, Loader2, AlertCircle, Upload } from "lucide-react";
-import { extractDeck } from "@/agents/deckExtractor";
+import { CheckCircle2, Loader2, AlertCircle, Upload } from "lucide-react";
 import { api } from "@/api/client";
-import type { DeckExtractionResult } from "@/domain/types";
 import type { ApiError } from "@/types/backend";
-
-const SAMPLE_DECKS = [
-  { value: "case-contradictory-traction", label: "Sample deck: TractionAI (contradictory traction)" },
-  { value: "case-founder-spike", label: "Sample deck: PromptBridge (strong founder, weak idea)" },
-  { value: "case-cold-start", label: "Sample deck: ML Code Review (cold-start talent)" },
-];
 
 const SECTIONS = [
   { id: "founder", title: "Founder and team", fields: ["Founder name", "Founder email", "LinkedIn", "GitHub", "Team size"] },
@@ -24,27 +16,11 @@ export default function Apply() {
   const [company, setCompany] = useState("");
   const [founder, setFounder] = useState("");
   const [email, setEmail] = useState("");
-  const [deckName, setDeckName] = useState(SAMPLE_DECKS[0].value);
   const [productUrl, setProductUrl] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [consent, setConsent] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [extraction, setExtraction] = useState<DeckExtractionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const handleExtract = async () => {
-    if (!deckName) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await extractDeck(deckName, "Sample deck content");
-      setExtraction(result);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Extraction failed");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -119,34 +95,18 @@ export default function Apply() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-          <div>
-            <label className="label mb-1.5 block">Deck (sample fixtures for local preview)</label>
-            <select
-              className="w-full rounded-sm border border-concrete/30 bg-paper px-3 py-2 text-sm font-sans outline-none"
-              value={deckName}
-              onChange={(e) => setDeckName(e.target.value)}
-            >
-              {SAMPLE_DECKS.map((d) => (
-                <option key={d.value} value={d.value}>
-                  {d.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="label mb-1.5 block">Real deck upload (PDF/DOCX/TXT/MD)</label>
-            <label className="flex w-full cursor-pointer items-center gap-2 rounded-sm border border-concrete/30 bg-paper px-3 py-2 text-sm font-sans text-ink hover:bg-manila/40">
-              <Upload size={16} />
-              <span className="flex-1 truncate">{file ? file.name : "Choose file"}</span>
-              <input
-                type="file"
-                className="hidden"
-                accept=".pdf,.docx,.txt,.md"
-                onChange={(e) => setFile(e.target.files?.[0] || null)}
-              />
-            </label>
-          </div>
+        <div>
+          <label className="label mb-1.5 block">Real deck upload (PDF/DOCX/TXT/MD)</label>
+          <label className="flex w-full cursor-pointer items-center gap-2 rounded-sm border border-concrete/30 bg-paper px-3 py-2 text-sm font-sans text-ink hover:bg-manila/40">
+            <Upload size={16} />
+            <span className="flex-1 truncate">{file ? file.name : "Choose file"}</span>
+            <input
+              type="file"
+              className="hidden"
+              accept=".pdf,.docx,.txt,.md"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+            />
+          </label>
         </div>
 
         <div className="flex items-center gap-2">
@@ -163,15 +123,6 @@ export default function Apply() {
 
         <div className="flex gap-3">
           <button
-            type="button"
-            onClick={handleExtract}
-            disabled={loading || !deckName}
-            className="flex items-center gap-2 rounded-sm border border-concrete/30 bg-paper px-4 py-2.5 text-sm font-sans font-medium text-ink hover:bg-manila/40 disabled:opacity-50"
-          >
-            {loading ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
-            {loading ? "Extracting…" : "Preview sample deck"}
-          </button>
-          <button
             type="submit"
             disabled={loading || !company || !founder || !email || !consent}
             className="flex items-center gap-2 rounded-sm bg-action px-4 py-2.5 text-sm font-sans font-medium text-paper hover:bg-action-dark disabled:opacity-50"
@@ -180,28 +131,6 @@ export default function Apply() {
             Submit application
           </button>
         </div>
-
-        {extraction && (
-          <div className="rounded-sm border border-concrete/20 bg-manila/30 p-4 text-sm text-ink/80">
-            <div className="flex items-center gap-2 font-semibold text-ink">
-              <FileText size={16} /> Sample extraction result
-            </div>
-            <div className="mt-2 grid grid-cols-3 gap-3 text-xs">
-              <div className="rounded-sm border border-concrete/20 bg-paper p-2">
-                <div className="text-concrete">Slides</div>
-                <div className="font-display font-semibold text-ink">{extraction.slides.length}</div>
-              </div>
-              <div className="rounded-sm border border-concrete/20 bg-paper p-2">
-                <div className="text-concrete">Claims</div>
-                <div className="font-display font-semibold text-ink">{extraction.slides.reduce((n, s) => n + s.claims.length, 0)}</div>
-              </div>
-              <div className="rounded-sm border border-concrete/20 bg-paper p-2">
-                <div className="text-concrete">Missing sections</div>
-                <div className="font-display font-semibold text-ink">{extraction.missingSections.length}</div>
-              </div>
-            </div>
-          </div>
-        )}
 
         {error && (
           <div className="rounded-sm border border-contradiction/30 bg-contradiction/10 p-3 text-sm text-contradiction">

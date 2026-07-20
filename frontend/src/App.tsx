@@ -6,7 +6,6 @@ import {
   FolderOpen,
   Gavel,
   SlidersHorizontal,
-  ShieldCheck,
   Zap,
 } from "lucide-react";
 import Discovery from "@/pages/Discovery";
@@ -15,7 +14,6 @@ import Cases from "@/pages/Cases";
 import DealRoom from "@/pages/DealRoom";
 import Decisions from "@/pages/Decisions";
 import Thesis from "@/pages/Thesis";
-import Validation from "@/pages/Validation";
 import Sourcing from "@/pages/Sourcing";
 import FounderImport from "@/pages/FounderImport";
 
@@ -26,7 +24,6 @@ const NAV = [
   { path: "/cases", label: "Cases", icon: FolderOpen },
   { path: "/decisions", label: "Decisions", icon: Gavel },
   { path: "/thesis", label: "Thesis", icon: SlidersHorizontal },
-  { path: "/validation", label: "Validation", icon: ShieldCheck },
 ];
 
 function App() {
@@ -85,7 +82,6 @@ function App() {
               <Route path="/cases/:caseId" element={<DealRoom />} />
               <Route path="/decisions" element={<Decisions />} />
               <Route path="/thesis" element={<Thesis />} />
-              <Route path="/validation" element={<Validation />} />
             </Routes>
           </main>
         </div>

@@ -36,11 +36,6 @@ app.conf.update(
             "schedule": DISPATCH_INTERVAL_SECONDS,
             "args": (),
         },
-        "dispatch-enrichment-jobs": {
-            "task": "tasks.enrichment_task.dispatch_enrichment_jobs",
-            "schedule": ENRICHMENT_DISPATCH_INTERVAL_SECONDS,
-            "args": (),
-        },
     },
 )
 
