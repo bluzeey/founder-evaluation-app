@@ -1,6 +1,43 @@
 import type { CaseStatus, DriverAssessment, DriverKey, InvestmentCase, TriggeredRule } from "@/domain/types";
 import { SPIKE_RULES, ROUTING_CONFIDENCE_FLOOR } from "@/config/weights";
 
+export type AssociateScreenScores = {
+  founderScore: number | null;
+  visionProductScore: number | null;
+  differentiationScore: number | null;
+  tractionScore: number | null;
+};
+
+export function evaluateAssociateRecommendation(scores: AssociateScreenScores): {
+  recommended: boolean;
+  trigger:
+    | "ONE_SCORE_GT_75_AND_TWO_SCORES_GT_50"
+    | "ONE_SCORE_GT_75"
+    | "TWO_SCORES_GT_50"
+    | "NOT_RECOMMENDED"
+    | "INCOMPLETE_EVALUATION";
+} {
+  const values = Object.values(scores);
+  if (values.some((value) => value === null)) {
+    return { recommended: false, trigger: "INCOMPLETE_EVALUATION" };
+  }
+
+  const numeric = values as number[];
+  const oneHigh = numeric.some((value) => value > 75);
+  const twoAbove50 = numeric.filter((value) => value > 50).length >= 2;
+
+  if (oneHigh && twoAbove50) {
+    return { recommended: true, trigger: "ONE_SCORE_GT_75_AND_TWO_SCORES_GT_50" };
+  }
+  if (oneHigh) {
+    return { recommended: true, trigger: "ONE_SCORE_GT_75" };
+  }
+  if (twoAbove50) {
+    return { recommended: true, trigger: "TWO_SCORES_GT_50" };
+  }
+  return { recommended: false, trigger: "NOT_RECOMMENDED" };
+}
+
 export function detectSpike(drivers: DriverAssessment[]): TriggeredRule[] {
   const triggered: TriggeredRule[] = [];
 

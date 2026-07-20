@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict, Any
@@ -21,9 +22,14 @@ logger = logging.getLogger(__name__)
 
 from database import get_db
 import crud
+from founder_csv_import import parse_csv_import_bytes
 import seed_data
 from models import (
+    CsvImportResult,
+    EnrichmentPolicy,
     Founder,
+    FounderDiscoveryPage,
+    FounderScreeningProfile,
     Thesis,
     EvidenceItem,
     Dimension,
@@ -45,6 +51,7 @@ from models import (
     SourceConfig,
     ApprovedPoolItemResponse,
     EnrichmentRun,
+    UpdateFounderScreeningProfileRequest,
 )
 from scoring import calculate_founder_score
 from research import OpenAIClient, create_founder_from_research, evidence_from_llm
@@ -81,6 +88,9 @@ app.add_middleware(
 # reload) where the JS cache is empty.
 CACHE_TTL_RULES: list[tuple[str, int]] = [
     (r"^/v1/founders/[^/]+/score$", 2),
+    (r"^/v1/founders/discovery", 5),
+    (r"^/v1/founders/recommended", 5),
+    (r"^/v1/founders/[^/]+/screening-profile$", 5),
     (r"^/v1/enrichment/runs", 2),
     (r"^/v1/sourcing/status", 3),
     (r"^/v1/theses$", 10),
@@ -121,6 +131,7 @@ class CreateFounderRequest(BaseModel):
     linkedin_url: Optional[str] = None
     github_url: Optional[str] = None
     auto_score: bool = True
+    enrichment_policy: EnrichmentPolicy = EnrichmentPolicy.AUTO
 
 
 class CreateThesisRequest(BaseModel):
@@ -219,34 +230,38 @@ def create_founder(req: CreateFounderRequest, db: Session = Depends(get_db)):
         location=req.location,
         linkedin_url=req.linkedin_url,
         github_url=req.github_url,
+        enrichment_policy=req.enrichment_policy,
     )
     crud.create_founder(db, founder)
 
-    # Auto-trigger social background research via Celery.
-    background_id = f"soc_{uuid.uuid4().hex[:8]}"
-    founder.social_background_id = background_id
-    crud.update_founder(db, founder_id, {"social_background_id": background_id})
-    pending = SocialMediaBackground(
-        id=background_id,
-        founder_id=founder_id,
-        status="pending",
-        linkedin_url=req.linkedin_url,
-        github_url=req.github_url,
-    )
-    store_social_background(pending)
-    task = research_social_background.delay(
-        founder_id=founder_id,
-        name=req.name,
-        email=req.email,
-        linkedin_url=req.linkedin_url,
-        github_url=req.github_url,
-        auto_score=req.auto_score,
-    )
+    task = None
+    background_id = None
+    if req.enrichment_policy == EnrichmentPolicy.AUTO:
+        background_id = f"soc_{uuid.uuid4().hex[:8]}"
+        founder.social_background_id = background_id
+        crud.update_founder(db, founder_id, {"social_background_id": background_id})
+        pending = SocialMediaBackground(
+            id=background_id,
+            founder_id=founder_id,
+            status="pending",
+            linkedin_url=req.linkedin_url,
+            github_url=req.github_url,
+        )
+        store_social_background(pending)
+        task = research_social_background.delay(
+            founder_id=founder_id,
+            name=req.name,
+            email=req.email,
+            linkedin_url=req.linkedin_url,
+            github_url=req.github_url,
+            auto_score=req.auto_score,
+        )
     logger.info(
-        "endpoint.create_founder.end founder_id=%s background_id=%s task_id=%s",
+        "endpoint.create_founder.end founder_id=%s background_id=%s task_id=%s enrichment_policy=%s",
         founder_id,
         background_id,
-        task.id,
+        task.id if task else None,
+        req.enrichment_policy.value,
     )
     return crud.founder_to_pydantic(db, crud.get_founder(db, founder_id))
 
@@ -286,6 +301,237 @@ def _apply_social_background(db: Session, founder_id: str) -> Optional[SocialMed
             )
 
     return background
+
+
+def _build_founder_discovery_page(
+    db: Session,
+    *,
+    q: Optional[str] = None,
+    recommended: Optional[bool] = None,
+    city: Optional[str] = None,
+    country: Optional[str] = None,
+    institution_or_program: Optional[str] = None,
+    school_or_lab: Optional[str] = None,
+    source_type: Optional[str] = None,
+    sector: Optional[str] = None,
+    funding_status: Optional[str] = None,
+    cohort_year: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    sort: Optional[str] = None,
+) -> FounderDiscoveryPage:
+    if limit < 1 or limit > 200:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 200")
+    if offset < 0:
+        raise HTTPException(status_code=400, detail="offset must be >= 0")
+
+    items = crud.list_founder_discovery_items(
+        db,
+        q=q,
+        recommended=recommended,
+        city=city,
+        country=country,
+        institution_or_program=institution_or_program,
+        school_or_lab=school_or_lab,
+        source_type=source_type,
+        sector=sector,
+        funding_status=funding_status,
+        cohort_year=cohort_year,
+        limit=limit,
+        offset=offset,
+        sort=sort,
+    )
+    total = crud.count_founder_discovery_items(
+        db,
+        q=q,
+        recommended=recommended,
+        city=city,
+        country=country,
+        institution_or_program=institution_or_program,
+        school_or_lab=school_or_lab,
+        source_type=source_type,
+        sector=sector,
+        funding_status=funding_status,
+        cohort_year=cohort_year,
+    )
+    facets = crud.get_founder_discovery_facets(
+        db,
+        q=q,
+        recommended=recommended,
+        city=city,
+        country=country,
+        institution_or_program=institution_or_program,
+        school_or_lab=school_or_lab,
+        source_type=source_type,
+        sector=sector,
+        funding_status=funding_status,
+        cohort_year=cohort_year,
+    )
+    return FounderDiscoveryPage(items=items, total=total, limit=limit, offset=offset, facets=facets)
+
+
+@app.get("/v1/founders/discovery", response_model=FounderDiscoveryPage)
+def founder_discovery(
+    q: Optional[str] = None,
+    recommended: Optional[bool] = None,
+    city: Optional[str] = None,
+    country: Optional[str] = None,
+    institution_or_program: Optional[str] = None,
+    school_or_lab: Optional[str] = None,
+    source_type: Optional[str] = None,
+    sector: Optional[str] = None,
+    funding_status: Optional[str] = None,
+    cohort_year: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    sort: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    page = _build_founder_discovery_page(
+        db,
+        q=q,
+        recommended=recommended,
+        city=city,
+        country=country,
+        institution_or_program=institution_or_program,
+        school_or_lab=school_or_lab,
+        source_type=source_type,
+        sector=sector,
+        funding_status=funding_status,
+        cohort_year=cohort_year,
+        limit=limit,
+        offset=offset,
+        sort=sort,
+    )
+    logger.info(
+        "endpoint.founder_discovery count=%s recommended=%s city=%s offset=%s limit=%s",
+        page.total,
+        recommended,
+        city,
+        offset,
+        limit,
+    )
+    return page
+
+
+@app.get("/v1/founders/recommended", response_model=FounderDiscoveryPage)
+def recommended_founders(
+    q: Optional[str] = None,
+    city: Optional[str] = None,
+    country: Optional[str] = None,
+    institution_or_program: Optional[str] = None,
+    school_or_lab: Optional[str] = None,
+    source_type: Optional[str] = None,
+    sector: Optional[str] = None,
+    funding_status: Optional[str] = None,
+    cohort_year: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    sort: Optional[str] = "recommended",
+    db: Session = Depends(get_db),
+):
+    return _build_founder_discovery_page(
+        db,
+        q=q,
+        recommended=True,
+        city=city,
+        country=country,
+        institution_or_program=institution_or_program,
+        school_or_lab=school_or_lab,
+        source_type=source_type,
+        sector=sector,
+        funding_status=funding_status,
+        cohort_year=cohort_year,
+        limit=limit,
+        offset=offset,
+        sort=sort,
+    )
+
+
+@app.get("/v1/founders/{founder_id}/screening-profile", response_model=FounderScreeningProfile)
+def get_founder_screening_profile(founder_id: str, db: Session = Depends(get_db)):
+    db_founder = crud.get_founder(db, founder_id)
+    if not db_founder:
+        raise HTTPException(status_code=404, detail="Founder not found")
+    db_profile = crud.get_screening_profile(db, founder_id)
+    if not db_profile:
+        raise HTTPException(status_code=404, detail="Screening profile not found")
+    return crud.screening_profile_to_pydantic(db_profile)
+
+
+@app.put("/v1/founders/{founder_id}/screening-profile", response_model=FounderScreeningProfile)
+def update_founder_screening_profile(
+    founder_id: str,
+    req: UpdateFounderScreeningProfileRequest,
+    db: Session = Depends(get_db),
+):
+    db_founder = crud.get_founder(db, founder_id)
+    if not db_founder:
+        raise HTTPException(status_code=404, detail="Founder not found")
+
+    existing = crud.get_screening_profile(db, founder_id)
+    payload = existing and crud.screening_profile_to_pydantic(existing).model_dump() or {}
+    payload.update(req.model_dump(exclude_unset=True))
+    saved = crud.create_or_update_screening_profile(db, founder_id, payload)
+    crud.ensure_founder_opportunity(db, founder_id, payload.get("next_diligence_action"))
+    db.refresh(saved)
+    return crud.screening_profile_to_pydantic(saved)
+
+
+@app.post("/v1/founders/import-csv", response_model=CsvImportResult)
+async def import_founders_csv(
+    file: UploadFile = File(...),
+    dry_run: bool = True,
+    force: bool = False,
+    db: Session = Depends(get_db),
+):
+    file_bytes = await file.read()
+    file_name = file.filename or "founders.csv"
+    file_checksum = hashlib.sha256(file_bytes).hexdigest()
+
+    try:
+        rows, row_errors, warnings = parse_csv_import_bytes(file_bytes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if row_errors:
+        return CsvImportResult(
+            dry_run=dry_run,
+            file_name=file_name,
+            rows_received=len(rows) + len(row_errors),
+            rows_valid=len(rows),
+            rows_invalid=len(row_errors),
+            founders_to_create=0,
+            founders_to_update=0,
+            profiles_to_create=0,
+            profiles_to_update=0,
+            rows_skipped=0,
+            errors=row_errors,
+            warnings=warnings,
+        )
+
+    try:
+        result = crud.bulk_upsert_founders_and_profiles(
+            db,
+            rows=rows,
+            file_name=file_name,
+            file_checksum=file_checksum,
+            dry_run=dry_run,
+            force=force,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    result.warnings.extend(warnings)
+    logger.info(
+        "endpoint.import_founders_csv dry_run=%s rows=%s founders_create=%s profiles_create=%s import_id=%s",
+        dry_run,
+        result.rows_received,
+        result.founders_to_create,
+        result.profiles_to_create,
+        result.import_id,
+    )
+    return result
 
 
 @app.get("/v1/founders/pool", response_model=List[FounderPoolItem])
@@ -1044,7 +1290,7 @@ def get_diligence(opportunity_id: str, db: Session = Depends(get_db)):
                 else None
             )
             cold_start = (snapshot is None) or (snapshot.overall_confidence <= 0.0)
-            if cold_start:
+            if cold_start and db_founder.enrichment_policy == EnrichmentPolicy.AUTO.value:
                 task = run_estimate.delay(founder_id)
                 logger.info(
                     "endpoint.get_diligence.cold_start_estimate_queued founder_id=%s task_id=%s",
@@ -1067,7 +1313,7 @@ def seed_demo(db: Session = Depends(get_db)):
 
     # Clear tables in a safe order.
     from sqlalchemy import text
-    db.execute(text("TRUNCATE sourcing_jobs, sourcing_schedules, claims, opportunities, score_snapshots, evidence_items, social_media_backgrounds, founder_pool_items, theses, founders CASCADE"))
+    db.execute(text("TRUNCATE founder_screening_profiles, founder_csv_imports, sourcing_jobs, sourcing_schedules, claims, opportunities, score_snapshots, evidence_items, social_media_backgrounds, founder_pool_items, theses, founders CASCADE"))
     db.commit()
 
     # Create thesis
@@ -1278,6 +1524,44 @@ def seed_all(db: Session = Depends(get_db)):
         "pool_items_created": created_pool_items,
         "message": "Seed applied. Existing records were skipped.",
     }
+
+
+@app.post("/v1/seed/founders/import", response_model=CsvImportResult)
+def seed_founder_import(
+    dry_run: bool = True,
+    force: bool = False,
+    db: Session = Depends(get_db),
+):
+    file_path = seed_data.FOUNDER_IMPORT_DATASET_PATH
+    file_bytes = file_path.read_bytes()
+    file_name = file_path.name
+    file_checksum = hashlib.sha256(file_bytes).hexdigest()
+    rows, row_errors, warnings = parse_csv_import_bytes(file_bytes)
+    if row_errors:
+        return CsvImportResult(
+            dry_run=dry_run,
+            file_name=file_name,
+            rows_received=len(rows) + len(row_errors),
+            rows_valid=len(rows),
+            rows_invalid=len(row_errors),
+            founders_to_create=0,
+            founders_to_update=0,
+            profiles_to_create=0,
+            profiles_to_update=0,
+            rows_skipped=0,
+            errors=row_errors,
+            warnings=warnings,
+        )
+    result = crud.bulk_upsert_founders_and_profiles(
+        db,
+        rows=rows,
+        file_name=file_name,
+        file_checksum=file_checksum,
+        dry_run=dry_run,
+        force=force,
+    )
+    result.warnings.extend(warnings)
+    return result
 
 
 @app.post("/v1/opportunities/{opportunity_id}/deck")

@@ -27,7 +27,133 @@ export type BackendFounder = {
   ai_research_sources: string[];
   social_background_id?: string;
   latest_score_snapshot?: BackendScoreSnapshot;
+   enrichment_policy?: "AUTO" | "MANUAL" | "NONE";
   created_at?: string;
+  updated_at?: string;
+};
+
+export type BackendRecommendationTrigger =
+  | "ONE_SCORE_GT_75_AND_TWO_SCORES_GT_50"
+  | "ONE_SCORE_GT_75"
+  | "TWO_SCORES_GT_50"
+  | "NOT_RECOMMENDED"
+  | "INCOMPLETE_EVALUATION";
+
+export type BackendScreeningFundingStatus =
+  | "no_public_institutional_funding_found"
+  | "non_dilutive_grant_or_prize_only"
+  | "public_equity_funding_found"
+  | "unknown";
+
+export type BackendFounderScreeningProfile = {
+  id: string;
+  founder_id: string;
+  external_record_id?: string;
+  project_name?: string;
+  project_summary?: string;
+  founder_role?: string;
+  sector?: string;
+  stage?: string;
+  source_type?: string;
+  institution_or_program?: string;
+  school_or_lab?: string;
+  cohort_year?: string;
+  institution_affiliation_basis?: string;
+  city?: string;
+  country?: string;
+  city_basis?: string;
+  city_confidence?: number;
+  target_market_geography?: string;
+  website_url?: string;
+  primary_source_url?: string;
+  source_locator?: string;
+  source_date?: string;
+  funding_status: BackendScreeningFundingStatus;
+  funding_check_as_of?: string;
+  funding_check_confidence?: number;
+  funding_notes?: string;
+  founder_score?: number;
+  founder_score_rationale?: string;
+  vision_product_score?: number;
+  vision_product_rationale?: string;
+  differentiation_score?: number;
+  differentiation_rationale?: string;
+  traction_score?: number;
+  traction_rationale?: string;
+  evidence_confidence?: number;
+  evidence_coverage?: number;
+  individual_attribution_confidence?: number;
+  evaluation_scope?: string;
+  key_evidence: string[];
+  counter_evidence: string[];
+  unknowns: string[];
+  next_diligence_action?: string;
+  recommended: boolean;
+  recommendation_trigger: BackendRecommendationTrigger;
+  recommended_reason?: string;
+  evaluation_version: string;
+  pedigree_used_in_scoring: boolean;
+  import_status?: string;
+  research_priority?: string;
+  tags: string[];
+  imported_associate_call_recommended?: boolean;
+  imported_recommendation_trigger?: string;
+  imported_recommended_reason?: string;
+  produced_by?: string;
+  import_id?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BackendFounderDiscoveryFacets = {
+  cities: string[];
+  institutions_or_programs: string[];
+  schools_or_labs: string[];
+  source_types: string[];
+  sectors: string[];
+  funding_statuses: string[];
+  cohort_years: string[];
+};
+
+export type BackendFounderDiscoveryItem = {
+  founder: BackendFounder;
+  profile?: BackendFounderScreeningProfile | null;
+  opportunity?: BackendOpportunity | null;
+};
+
+export type BackendFounderDiscoveryPage = {
+  items: BackendFounderDiscoveryItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  facets: BackendFounderDiscoveryFacets;
+};
+
+export type BackendCsvImportRowError = {
+  row_number: number;
+  external_record_id?: string;
+  field?: string;
+  message: string;
+};
+
+export type BackendCsvImportResult = {
+  dry_run: boolean;
+  file_name: string;
+  rows_received: number;
+  rows_valid: number;
+  rows_invalid: number;
+  founders_to_create: number;
+  founders_to_update: number;
+  profiles_to_create: number;
+  profiles_to_update: number;
+  rows_skipped: number;
+  errors: BackendCsvImportRowError[];
+  warnings: string[];
+  import_id?: string;
+  created_founder_ids: string[];
+  updated_founder_ids: string[];
+  created_profile_ids: string[];
+  updated_profile_ids: string[];
 };
 
 export type BackendScoreSnapshot = {
@@ -273,6 +399,7 @@ export type CreateFounderRequest = {
   location?: string;
   linkedin_url?: string;
   github_url?: string;
+  enrichment_policy?: "AUTO" | "MANUAL" | "NONE";
 };
 
 export type UploadDeckResponse = {

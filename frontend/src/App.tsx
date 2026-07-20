@@ -2,6 +2,7 @@ import { Routes, Route, Link, Navigate, useLocation } from "react-router-dom";
 import { AppProvider } from "@/store/appContext";
 import {
   Inbox,
+  Sparkles,
   FolderOpen,
   Gavel,
   SlidersHorizontal,
@@ -9,6 +10,7 @@ import {
   Zap,
 } from "lucide-react";
 import Discovery from "@/pages/Discovery";
+import Recommended from "@/pages/Recommended";
 import Cases from "@/pages/Cases";
 import DealRoom from "@/pages/DealRoom";
 import Decisions from "@/pages/Decisions";
@@ -18,6 +20,7 @@ import Sourcing from "@/pages/Sourcing";
 
 const NAV = [
   { path: "/discovery", label: "Discovery", icon: Inbox },
+  { path: "/recommended", label: "Recommended", icon: Sparkles },
   { path: "/sourcing", label: "Sourcing", icon: Zap },
   { path: "/cases", label: "Cases", icon: FolderOpen },
   { path: "/decisions", label: "Decisions", icon: Gavel },
@@ -74,6 +77,7 @@ function App() {
             <Routes>
               <Route path="/" element={<Navigate to="/discovery" replace />} />
               <Route path="/discovery" element={<Discovery />} />
+              <Route path="/recommended" element={<Recommended />} />
               <Route path="/sourcing" element={<Sourcing />} />
               <Route path="/cases" element={<Cases />} />
               <Route path="/cases/:caseId" element={<DealRoom />} />

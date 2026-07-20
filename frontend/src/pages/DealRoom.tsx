@@ -3,16 +3,19 @@ import { useParams, Link } from "react-router-dom";
 import { AlertTriangle, ArrowLeft, Github, Linkedin, Loader2, Upload } from "lucide-react";
 import { CaseStatusBadge } from "@/components/StatusBadge";
 import { CaseStatusActions } from "@/components/CaseStatusActions";
+import { FourScoreStrip } from "@/features/founders/FourScoreStrip";
+import { RecommendationBadge } from "@/features/founders/RecommendationBadge";
 import { api, invalidateCache } from "@/api/client";
 import { useAdaptivePolling } from "@/hooks/useAdaptivePolling";
 import type {
   BackendOpportunity,
   BackendFounder,
-  BackendClaim,
-  BackendScoreSnapshot,
-  BackendDimensionBreakdown,
-  ApiError,
-} from "@/types/backend";
+    BackendClaim,
+    BackendScoreSnapshot,
+    BackendDimensionBreakdown,
+    BackendFounderScreeningProfile,
+    ApiError,
+  } from "@/types/backend";
 import type { CaseStatus } from "@/domain/types";
 
 export default function DealRoom() {
@@ -20,6 +23,7 @@ export default function DealRoom() {
   const [opportunity, setOpportunity] = useState<BackendOpportunity | null>(null);
   const [founder, setFounder] = useState<BackendFounder | null>(null);
   const [snapshot, setSnapshot] = useState<BackendScoreSnapshot | null>(null);
+  const [screeningProfile, setScreeningProfile] = useState<BackendFounderScreeningProfile | null>(null);
   const [claims, setClaims] = useState<BackendClaim[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -63,6 +67,12 @@ export default function DealRoom() {
         if (cancelled) return;
         if (f) setFounder(f);
         setSnapshot(snap);
+        try {
+          const profile = await api.founders.screeningProfile(opp.founder_id);
+          if (!cancelled) setScreeningProfile(profile);
+        } catch {
+          if (!cancelled) setScreeningProfile(null);
+        }
 
         // Auto-trigger the full enrichment pipeline when the founder is at
         // cold-start (0% confidence, all dimensions unknown). The pipeline
@@ -70,7 +80,12 @@ export default function DealRoom() {
         // a separate effect polls enrichment runs + the score until the
         // confidence crosses the threshold.
         const isColdStart = snap.overall_confidence <= 0;
-        if (isColdStart && f && estimateTriggeredRef.current !== f.id) {
+        if (
+          isColdStart &&
+          f &&
+          f.enrichment_policy === "AUTO" &&
+          estimateTriggeredRef.current !== f.id
+        ) {
           estimateTriggeredRef.current = f.id;
           try {
             await api.founders.enrich(f.id);
@@ -193,6 +208,7 @@ export default function DealRoom() {
       opportunity={opportunity}
       founder={founder}
       snapshot={snapshot}
+      screeningProfile={screeningProfile}
       claims={claims}
       uploading={uploading}
       setUploading={setUploading}
@@ -283,10 +299,57 @@ function DimensionCard({
   );
 }
 
+function AssociateScreenCard({
+  title,
+  score,
+  rationale,
+  profile,
+}: {
+  title: string;
+  score?: number;
+  rationale?: string;
+  profile: BackendFounderScreeningProfile;
+}) {
+  return (
+    <div className="rounded-sm border border-concrete/20 bg-paper p-3 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="label">{title}</div>
+        <div className="font-display text-xl font-bold text-ink">{score ?? "—"}</div>
+      </div>
+      <p className="text-sm text-ink/80">{rationale || "No rationale recorded."}</p>
+      <div className="grid gap-3 text-xs text-concrete sm:grid-cols-3">
+        <ListBlock label="Key evidence" items={profile.key_evidence} />
+        <ListBlock label="Counter-evidence" items={profile.counter_evidence} />
+        <ListBlock label="Unknowns" items={profile.unknowns} />
+      </div>
+    </div>
+  );
+}
+
+function ListBlock({ label, items }: { label: string; items: string[] }) {
+  return (
+    <div>
+      <div className="label mb-1">{label}</div>
+      {items.length > 0 ? (
+        <div className="space-y-1">
+          {items.slice(0, 3).map((item) => (
+            <div key={`${label}-${item}`} className="rounded-sm bg-manila/20 px-2 py-1 text-ink/80">
+              {item}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div>—</div>
+      )}
+    </div>
+  );
+}
+
 function LiveOpportunityView({
   opportunity,
   founder,
   snapshot,
+  screeningProfile,
   claims,
   uploading,
   setUploading,
@@ -298,6 +361,7 @@ function LiveOpportunityView({
   opportunity: BackendOpportunity;
   founder: BackendFounder | null;
   snapshot: BackendScoreSnapshot | null;
+  screeningProfile: BackendFounderScreeningProfile | null;
   claims: BackendClaim[];
   uploading: boolean;
   setUploading: (v: boolean) => void;
@@ -383,7 +447,7 @@ function LiveOpportunityView({
 
         <div className="border-t border-concrete/10 pt-3 text-sm text-concrete">
           <span className="font-semibold text-ink">Next action:</span>{" "}
-          {opportunity.next_founder_action || "Review opportunity details"}
+          {screeningProfile?.next_diligence_action || opportunity.next_founder_action || "Review opportunity details"}
         </div>
       </div>
 
@@ -417,8 +481,58 @@ function LiveOpportunityView({
       </div>
 
       <div className="panel space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="font-display text-lg font-semibold text-ink">Founder score breakdown</h3>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="font-display text-lg font-semibold text-ink">Associate Screen</h3>
+            <p className="text-sm text-concrete">
+              Founder, Vision &amp; Product, Differentiation, and Traction stay independent. No final weighted score is shown here.
+            </p>
+          </div>
+          <RecommendationBadge trigger={screeningProfile?.recommendation_trigger} />
+        </div>
+
+        {screeningProfile ? (
+          <>
+            <FourScoreStrip profile={screeningProfile} />
+            <div className="grid gap-3 lg:grid-cols-2">
+              <AssociateScreenCard title="Founder" score={screeningProfile.founder_score} rationale={screeningProfile.founder_score_rationale} profile={screeningProfile} />
+              <AssociateScreenCard title="Vision & Product" score={screeningProfile.vision_product_score} rationale={screeningProfile.vision_product_rationale} profile={screeningProfile} />
+              <AssociateScreenCard title="Differentiation" score={screeningProfile.differentiation_score} rationale={screeningProfile.differentiation_rationale} profile={screeningProfile} />
+              <AssociateScreenCard title="Traction" score={screeningProfile.traction_score} rationale={screeningProfile.traction_rationale} profile={screeningProfile} />
+            </div>
+
+            <div className="grid gap-3 lg:grid-cols-2">
+              <div className="rounded-sm border border-concrete/20 bg-paper p-3 text-sm text-ink/80">
+                <div className="label mb-2">Provenance</div>
+                <div>Trigger: {screeningProfile.recommendation_trigger}</div>
+                <div>Source: {screeningProfile.primary_source_url || "—"}</div>
+                <div>Locator: {screeningProfile.source_locator || "—"}</div>
+                <div>Evaluation scope: {screeningProfile.evaluation_scope || "—"}</div>
+                <div>Individual attribution confidence: {screeningProfile.individual_attribution_confidence !== undefined ? `${Math.round(screeningProfile.individual_attribution_confidence * 100)}%` : "—"}</div>
+              </div>
+              <div className="rounded-sm border border-concrete/20 bg-paper p-3 text-sm text-ink/80">
+                <div className="label mb-2">Funding screen</div>
+                <div>{screeningProfile.funding_status.replace(/_/g, " ")}</div>
+                <div>As of {screeningProfile.funding_check_as_of || "—"}</div>
+                <div>Confidence {screeningProfile.funding_check_confidence !== undefined ? `${Math.round(screeningProfile.funding_check_confidence * 100)}%` : "—"}</div>
+                <div className="mt-2">{screeningProfile.funding_notes || "No funding notes available."}</div>
+              </div>
+            </div>
+
+            <div className="rounded-sm border border-action/20 bg-action/5 p-3 text-sm text-ink/80">
+              <span className="font-semibold text-ink">Next diligence action:</span>{" "}
+              {screeningProfile.next_diligence_action || "—"}
+            </div>
+          </>
+        ) : (
+          <div className="text-sm text-concrete">Not evaluated.</div>
+        )}
+      </div>
+
+      <details className="panel">
+        <summary className="font-display text-lg font-semibold text-ink">Evidence Engine (legacy)</summary>
+        <div className="mt-4 space-y-4">
+          <div className="flex items-center justify-between">
           {enriching ? (
             <span className="inline-flex items-center gap-1.5 rounded-sm border border-action/30 bg-action/10 px-2 py-1 text-xs font-mono font-medium text-action">
               <Loader2 size={12} className="animate-spin" /> Enriching ({stageLabel(enrichStage)})…
@@ -428,17 +542,18 @@ function LiveOpportunityView({
               <Loader2 size={12} className="animate-spin" /> Estimating score…
             </span>
           ) : null}
-        </div>
-        {snapshot ? (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {snapshot.dimension_breakdowns.map((bd) => (
-              <DimensionCard key={bd.dimension} breakdown={bd} snapshot={snapshot} />
-            ))}
           </div>
-        ) : (
-          <div className="text-sm text-concrete">No score snapshot available yet.</div>
-        )}
-      </div>
+          {snapshot ? (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {snapshot.dimension_breakdowns.map((bd) => (
+                <DimensionCard key={bd.dimension} breakdown={bd} snapshot={snapshot} />
+              ))}
+            </div>
+          ) : (
+            <div className="text-sm text-concrete">No score snapshot available yet.</div>
+          )}
+        </div>
+      </details>
 
       <div className="panel space-y-4">
         <div className="flex items-center justify-between">

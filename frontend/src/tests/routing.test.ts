@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { calculateTrustScore } from "@/engine/trust";
-import { routeCase, detectSpike } from "@/engine/routing";
+import { routeCase, detectSpike, evaluateAssociateRecommendation } from "@/engine/routing";
 import { applyEvent } from "@/engine/stateMachine";
 import { caseA, caseB, caseC } from "@/data/demoCases";
 import type { DriverAssessment, InvestmentCase } from "@/domain/types";
@@ -16,6 +16,73 @@ describe("trust", () => {
 });
 
 describe("routing", () => {
+  it("associate recommendation uses strict 50 and 75 boundaries", () => {
+    expect(
+      evaluateAssociateRecommendation({
+        founderScore: 75,
+        visionProductScore: 51,
+        differentiationScore: 49,
+        tractionScore: 49,
+      })
+    ).toEqual({ recommended: true, trigger: "TWO_SCORES_GT_50" });
+
+    expect(
+      evaluateAssociateRecommendation({
+        founderScore: 50,
+        visionProductScore: 50,
+        differentiationScore: 100,
+        tractionScore: 0,
+      })
+    ).toEqual({ recommended: true, trigger: "ONE_SCORE_GT_75" });
+
+    expect(
+      evaluateAssociateRecommendation({
+        founderScore: 50,
+        visionProductScore: 50,
+        differentiationScore: 75,
+        tractionScore: 0,
+      })
+    ).toEqual({ recommended: false, trigger: "NOT_RECOMMENDED" });
+  });
+
+  it("associate recommendation covers all trigger combinations", () => {
+    expect(
+      evaluateAssociateRecommendation({
+        founderScore: 90,
+        visionProductScore: 80,
+        differentiationScore: 40,
+        tractionScore: 40,
+      })
+    ).toEqual({ recommended: true, trigger: "ONE_SCORE_GT_75_AND_TWO_SCORES_GT_50" });
+
+    expect(
+      evaluateAssociateRecommendation({
+        founderScore: 76,
+        visionProductScore: 40,
+        differentiationScore: 40,
+        tractionScore: 40,
+      })
+    ).toEqual({ recommended: true, trigger: "ONE_SCORE_GT_75" });
+
+    expect(
+      evaluateAssociateRecommendation({
+        founderScore: 60,
+        visionProductScore: 60,
+        differentiationScore: 40,
+        tractionScore: 40,
+      })
+    ).toEqual({ recommended: true, trigger: "TWO_SCORES_GT_50" });
+
+    expect(
+      evaluateAssociateRecommendation({
+        founderScore: null,
+        visionProductScore: 90,
+        differentiationScore: 90,
+        tractionScore: 90,
+      })
+    ).toEqual({ recommended: false, trigger: "INCOMPLETE_EVALUATION" });
+  });
+
   it("unresolved material contradiction always creates validation hold", () => {
     expect(routeCase(caseC)).toBe("VALIDATION_HOLD");
   });

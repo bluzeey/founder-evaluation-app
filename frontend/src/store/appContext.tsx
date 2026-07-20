@@ -18,7 +18,7 @@ export type AppState = {
   thesisError: string | null;
 };
 
-const STORAGE_KEY = "vc-brain-demo-state-v1";
+const STORAGE_KEY = "vc-brain-demo-state-v2";
 
 const defaultState: AppState = {
   caseOverrides: {},

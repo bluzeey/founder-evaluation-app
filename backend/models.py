@@ -36,6 +36,27 @@ class Dimension(str, Enum):
     PRIOR_VENTURE_OUTCOMES = "prior_venture_outcomes"
 
 
+class EnrichmentPolicy(str, Enum):
+    AUTO = "AUTO"
+    MANUAL = "MANUAL"
+    NONE = "NONE"
+
+
+class ScreeningFundingStatus(str, Enum):
+    NO_PUBLIC_INSTITUTIONAL_FUNDING_FOUND = "no_public_institutional_funding_found"
+    NON_DILUTIVE_GRANT_OR_PRIZE_ONLY = "non_dilutive_grant_or_prize_only"
+    PUBLIC_EQUITY_FUNDING_FOUND = "public_equity_funding_found"
+    UNKNOWN = "unknown"
+
+
+class RecommendationTrigger(str, Enum):
+    ONE_SCORE_GT_75_AND_TWO_SCORES_GT_50 = "ONE_SCORE_GT_75_AND_TWO_SCORES_GT_50"
+    ONE_SCORE_GT_75 = "ONE_SCORE_GT_75"
+    TWO_SCORES_GT_50 = "TWO_SCORES_GT_50"
+    NOT_RECOMMENDED = "NOT_RECOMMENDED"
+    INCOMPLETE_EVALUATION = "INCOMPLETE_EVALUATION"
+
+
 DIMENSION_WEIGHTS = {
     Dimension.EXECUTION_AND_SHIPPING: 0.20,
     Dimension.TECHNICAL_OR_DOMAIN_ABILITY: 0.18,
@@ -324,6 +345,131 @@ class Founder(BaseModel):
     ai_research_sources: List[str] = []
     social_background_id: Optional[str] = None
     latest_score_snapshot: Optional[ScoreSnapshot] = None
+    enrichment_policy: EnrichmentPolicy = EnrichmentPolicy.AUTO
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class FounderScreeningProfileFields(BaseModel):
+    external_record_id: Optional[str] = None
+    project_name: Optional[str] = None
+    project_summary: Optional[str] = None
+    founder_role: Optional[str] = None
+    sector: Optional[str] = None
+    stage: Optional[str] = None
+    source_type: Optional[str] = None
+    institution_or_program: Optional[str] = None
+    school_or_lab: Optional[str] = None
+    cohort_year: Optional[str] = None
+    institution_affiliation_basis: Optional[str] = None
+    city: Optional[str] = None
+    country: Optional[str] = None
+    city_basis: Optional[str] = None
+    city_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    target_market_geography: Optional[str] = None
+    website_url: Optional[str] = None
+    primary_source_url: Optional[str] = None
+    source_locator: Optional[str] = None
+    source_date: Optional[str] = None
+    funding_status: ScreeningFundingStatus = ScreeningFundingStatus.UNKNOWN
+    funding_check_as_of: Optional[str] = None
+    funding_check_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    funding_notes: Optional[str] = None
+    founder_score: Optional[int] = Field(default=None, ge=0, le=100)
+    founder_score_rationale: Optional[str] = None
+    vision_product_score: Optional[int] = Field(default=None, ge=0, le=100)
+    vision_product_rationale: Optional[str] = None
+    differentiation_score: Optional[int] = Field(default=None, ge=0, le=100)
+    differentiation_rationale: Optional[str] = None
+    traction_score: Optional[int] = Field(default=None, ge=0, le=100)
+    traction_rationale: Optional[str] = None
+    evidence_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    evidence_coverage: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    individual_attribution_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    evaluation_scope: Optional[str] = None
+    key_evidence: List[str] = Field(default_factory=list)
+    counter_evidence: List[str] = Field(default_factory=list)
+    unknowns: List[str] = Field(default_factory=list)
+    next_diligence_action: Optional[str] = None
+    recommended_reason: Optional[str] = None
+    evaluation_version: str = "associate_screen_v1"
+    pedigree_used_in_scoring: bool = False
+    import_status: Optional[str] = None
+    research_priority: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    imported_associate_call_recommended: Optional[bool] = None
+    imported_recommendation_trigger: Optional[str] = None
+    imported_recommended_reason: Optional[str] = None
+    produced_by: Optional[str] = None
+    import_id: Optional[str] = None
+
+
+class CreateFounderScreeningProfileRequest(FounderScreeningProfileFields):
+    pass
+
+
+class UpdateFounderScreeningProfileRequest(FounderScreeningProfileFields):
+    pass
+
+
+class FounderScreeningProfile(FounderScreeningProfileFields):
+    id: str
+    founder_id: str
+    recommended: bool = False
+    recommendation_trigger: RecommendationTrigger = RecommendationTrigger.INCOMPLETE_EVALUATION
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class FounderDiscoveryFacets(BaseModel):
+    cities: List[str] = Field(default_factory=list)
+    institutions_or_programs: List[str] = Field(default_factory=list)
+    schools_or_labs: List[str] = Field(default_factory=list)
+    source_types: List[str] = Field(default_factory=list)
+    sectors: List[str] = Field(default_factory=list)
+    funding_statuses: List[str] = Field(default_factory=list)
+    cohort_years: List[str] = Field(default_factory=list)
+
+
+class FounderDiscoveryItem(BaseModel):
+    founder: Founder
+    profile: Optional[FounderScreeningProfile] = None
+    opportunity: Optional[OpportunityScreen] = None
+
+
+class FounderDiscoveryPage(BaseModel):
+    items: List[FounderDiscoveryItem] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
+    facets: FounderDiscoveryFacets = Field(default_factory=FounderDiscoveryFacets)
+
+
+class CsvImportRowError(BaseModel):
+    row_number: int
+    external_record_id: Optional[str] = None
+    field: Optional[str] = None
+    message: str
+
+
+class CsvImportResult(BaseModel):
+    dry_run: bool = True
+    file_name: str
+    rows_received: int
+    rows_valid: int
+    rows_invalid: int
+    founders_to_create: int
+    founders_to_update: int
+    profiles_to_create: int
+    profiles_to_update: int
+    rows_skipped: int
+    errors: List[CsvImportRowError] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    import_id: Optional[str] = None
+    created_founder_ids: List[str] = Field(default_factory=list)
+    updated_founder_ids: List[str] = Field(default_factory=list)
+    created_profile_ids: List[str] = Field(default_factory=list)
+    updated_profile_ids: List[str] = Field(default_factory=list)
 
 
 class ApprovedPoolItemResponse(BaseModel):

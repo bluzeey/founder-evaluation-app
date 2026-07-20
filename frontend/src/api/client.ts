@@ -1,4 +1,7 @@
 import type {
+  BackendCsvImportResult,
+  BackendFounderDiscoveryPage,
+  BackendFounderScreeningProfile,
   BackendThesis,
   BackendFounder,
   BackendOpportunity,
@@ -98,6 +101,16 @@ async function postForm<T>(path: string, formData: FormData): Promise<T> {
   return handleResponse<T>(response);
 }
 
+function withQuery(path: string, params: Record<string, string | number | boolean | null | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === "") continue;
+    search.set(key, String(value));
+  }
+  const query = search.toString();
+  return query ? `${path}?${query}` : path;
+}
+
 export const api = {
   seed: () =>
     post<BackendSeedResponse>("/v1/seed").then((r) => {
@@ -136,6 +149,40 @@ export const api = {
   founders: {
     list: () => get<BackendFounder[]>("/v1/founders"),
     get: (id: string) => get<BackendFounder>(`/v1/founders/${id}`),
+    discovery: (params: Record<string, string | number | boolean | null | undefined> = {}) =>
+      get<BackendFounderDiscoveryPage>(withQuery("/v1/founders/discovery", params)),
+    recommended: (params: Record<string, string | number | boolean | null | undefined> = {}) =>
+      get<BackendFounderDiscoveryPage>(withQuery("/v1/founders/recommended", params)),
+    screeningProfile: (id: string) =>
+      get<BackendFounderScreeningProfile>(`/v1/founders/${id}/screening-profile`),
+    updateScreeningProfile: (id: string, req: Partial<BackendFounderScreeningProfile>) =>
+      put<BackendFounderScreeningProfile>(`/v1/founders/${id}/screening-profile`, req).then((r) => {
+        invalidate(`/v1/founders/${id}/screening-profile`);
+        invalidate("/v1/founders/discovery");
+        invalidate("/v1/founders/recommended");
+        invalidate("/v1/founders");
+        invalidate("/v1/opportunities");
+        return r;
+      }),
+    importCsv: (file: File, opts: { dryRun?: boolean; force?: boolean } = {}) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      return postForm<BackendCsvImportResult>(
+        withQuery("/v1/founders/import-csv", {
+          dry_run: opts.dryRun ?? true,
+          force: opts.force ?? false,
+        }),
+        formData
+      ).then((r) => {
+        if (!r.dry_run) {
+          invalidate("/v1/founders/discovery");
+          invalidate("/v1/founders/recommended");
+          invalidate("/v1/founders");
+          invalidate("/v1/opportunities");
+        }
+        return r;
+      });
+    },
     score: (id: string) => get<BackendScoreSnapshot>(`/v1/founders/${id}/score`),
     estimate: (id: string) =>
       post<QueuedResponse>(`/v1/founders/${id}/estimate`).then((r) => {
@@ -152,6 +199,8 @@ export const api = {
     create: (req: CreateFounderRequest) =>
       post<BackendFounder>("/v1/founders", req).then((r) => {
         invalidate("/v1/founders");
+        invalidate("/v1/founders/discovery");
+        invalidate("/v1/founders/recommended");
         return r;
       }),
   },

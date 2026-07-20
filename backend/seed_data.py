@@ -5,6 +5,7 @@ All IDs are prefixed with "demo_" to avoid collisions with live data.
 """
 from datetime import datetime, timedelta, timezone
 import os
+from pathlib import Path
 from typing import List, Dict, Any
 
 from models import SourceConfig, Thesis
@@ -13,6 +14,11 @@ from models import SourceConfig, Thesis
 # web-search LLM calls and avoids rate-limit storms.
 DEFAULT_SOURCING_INTERVAL_SECONDS = int(
     os.environ.get("DEFAULT_SOURCING_INTERVAL_SECONDS", "3600")
+)
+FOUNDER_IMPORT_DATASET_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "founderos_delivery_bundle_2026-07-20"
+    / "founderos_founder_import_150.csv"
 )
 
 # ---------------------------------------------------------------------------

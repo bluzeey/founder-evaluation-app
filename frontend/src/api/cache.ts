@@ -23,6 +23,9 @@ const DEFAULT_STALE_MS = 30_000;
 
 // Order matters: more-specific patterns first.
 const TTL_RULES: Array<{ match: RegExp; ttl: TtlConfig }> = [
+  { match: /\/v1\/founders\/discovery/, ttl: { freshMs: 5_000, staleMs: 30_000 } },
+  { match: /\/v1\/founders\/recommended/, ttl: { freshMs: 5_000, staleMs: 30_000 } },
+  { match: /\/v1\/founders\/[^/]+\/screening-profile$/, ttl: { freshMs: 5_000, staleMs: 30_000 } },
   { match: /\/v1\/founders\/[^/]+\/score$/, ttl: { freshMs: 2_000, staleMs: 10_000 } },
   { match: /\/v1\/enrichment\/runs/, ttl: { freshMs: 2_000, staleMs: 10_000 } },
   { match: /\/v1\/sourcing\/status/, ttl: { freshMs: 3_000, staleMs: 15_000 } },

@@ -1,25 +1,37 @@
 import logging
+import uuid
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
+from sqlalchemy import and_, case, cast, desc, func, or_, String as SAString
 from sqlalchemy.orm import Session
 
 import db_models
 from models import (
     Claim,
+    CsvImportRowError,
+    CsvImportResult,
     DimensionBreakdown,
+    EnrichmentPolicy,
     EnrichmentRun,
     EvidenceItem,
     Founder,
+    FounderDiscoveryFacets,
+    FounderDiscoveryItem,
+    FounderDiscoveryPage,
     FounderPoolItem,
+    FounderScreeningProfile,
     OpportunityScreen,
+    RecommendationTrigger,
     ScoreSnapshot,
+    ScreeningFundingStatus,
     SocialFootprint,
     SocialMediaBackground,
     SourcingJob,
     SourcingSchedule,
     Thesis,
 )
+from screening import evaluate_recommendation
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +39,27 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 # Founders
 # -----------------------------------------------------------------------------
+
+
+def normalize_text_value(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = " ".join(value.strip().lower().split())
+    return normalized or None
+
+
+def normalize_url_value(value: Optional[str]) -> Optional[str]:
+    normalized = normalize_text_value(value)
+    if normalized is None:
+        return None
+    if normalized.endswith("/"):
+        normalized = normalized[:-1]
+    return normalized or None
+
+
+def create_placeholder_import_email(external_record_id: Optional[str], founder_id: str) -> str:
+    token = external_record_id or founder_id
+    return f"import+{token.lower()}@founderos.import"
 
 def create_founder(db: Session, founder: Founder) -> db_models.Founder:
     db_founder = db_models.Founder(
@@ -38,6 +71,7 @@ def create_founder(db: Session, founder: Founder) -> db_models.Founder:
         location=founder.location,
         location_city=founder.location_city,
         linkedin_url=founder.linkedin_url,
+        linkedin_url_normalized=normalize_url_value(founder.linkedin_url),
         github_url=founder.github_url,
         source_reason=founder.source_reason,
         source_url=founder.source_url,
@@ -45,6 +79,7 @@ def create_founder(db: Session, founder: Founder) -> db_models.Founder:
         ai_research_sources=founder.ai_research_sources or [],
         social_background_id=founder.social_background_id,
         latest_score_snapshot_id=founder.latest_score_snapshot.id if founder.latest_score_snapshot else None,
+        enrichment_policy=founder.enrichment_policy.value if isinstance(founder.enrichment_policy, EnrichmentPolicy) else founder.enrichment_policy,
     )
     db.add(db_founder)
     db.commit()
@@ -64,6 +99,10 @@ def update_founder(db: Session, founder_id: str, updates: Dict) -> Optional[db_m
     db_founder = get_founder(db, founder_id)
     if not db_founder:
         return None
+    if "linkedin_url" in updates:
+        updates["linkedin_url_normalized"] = normalize_url_value(updates.get("linkedin_url"))
+    if "enrichment_policy" in updates and isinstance(updates["enrichment_policy"], EnrichmentPolicy):
+        updates["enrichment_policy"] = updates["enrichment_policy"].value
     for key, value in updates.items():
         setattr(db_founder, key, value)
     db.commit()
@@ -87,12 +126,822 @@ def founder_to_pydantic(db: Session, db_founder: db_models.Founder) -> Founder:
         "ai_research_summary": db_founder.ai_research_summary,
         "ai_research_sources": db_founder.ai_research_sources or [],
         "social_background_id": db_founder.social_background_id,
+        "enrichment_policy": db_founder.enrichment_policy,
+        "created_at": db_founder.created_at,
+        "updated_at": db_founder.updated_at,
     }
     if db_founder.latest_score_snapshot_id:
         db_snapshot = get_score_snapshot(db, db_founder.latest_score_snapshot_id)
         if db_snapshot:
             data["latest_score_snapshot"] = score_snapshot_to_pydantic(db_snapshot)
     return Founder(**data)
+
+
+def screening_profile_to_pydantic(
+    db_profile: db_models.FounderScreeningProfile,
+) -> FounderScreeningProfile:
+    return FounderScreeningProfile(
+        id=db_profile.id,
+        founder_id=db_profile.founder_id,
+        external_record_id=db_profile.external_record_id,
+        project_name=db_profile.project_name,
+        project_summary=db_profile.project_summary,
+        founder_role=db_profile.founder_role,
+        sector=db_profile.sector,
+        stage=db_profile.stage,
+        source_type=db_profile.source_type,
+        institution_or_program=db_profile.institution_or_program,
+        school_or_lab=db_profile.school_or_lab,
+        cohort_year=db_profile.cohort_year,
+        institution_affiliation_basis=db_profile.institution_affiliation_basis,
+        city=db_profile.city,
+        country=db_profile.country,
+        city_basis=db_profile.city_basis,
+        city_confidence=db_profile.city_confidence,
+        target_market_geography=db_profile.target_market_geography,
+        website_url=db_profile.website_url,
+        primary_source_url=db_profile.primary_source_url,
+        source_locator=db_profile.source_locator,
+        source_date=db_profile.source_date,
+        funding_status=ScreeningFundingStatus(db_profile.funding_status),
+        funding_check_as_of=db_profile.funding_check_as_of,
+        funding_check_confidence=db_profile.funding_check_confidence,
+        funding_notes=db_profile.funding_notes,
+        founder_score=db_profile.founder_score,
+        founder_score_rationale=db_profile.founder_score_rationale,
+        vision_product_score=db_profile.vision_product_score,
+        vision_product_rationale=db_profile.vision_product_rationale,
+        differentiation_score=db_profile.differentiation_score,
+        differentiation_rationale=db_profile.differentiation_rationale,
+        traction_score=db_profile.traction_score,
+        traction_rationale=db_profile.traction_rationale,
+        evidence_confidence=db_profile.evidence_confidence,
+        evidence_coverage=db_profile.evidence_coverage,
+        individual_attribution_confidence=db_profile.individual_attribution_confidence,
+        evaluation_scope=db_profile.evaluation_scope,
+        key_evidence=db_profile.key_evidence or [],
+        counter_evidence=db_profile.counter_evidence or [],
+        unknowns=db_profile.unknowns or [],
+        next_diligence_action=db_profile.next_diligence_action,
+        recommended=db_profile.recommended,
+        recommendation_trigger=RecommendationTrigger(db_profile.recommendation_trigger),
+        recommended_reason=db_profile.recommended_reason,
+        evaluation_version=db_profile.evaluation_version,
+        pedigree_used_in_scoring=db_profile.pedigree_used_in_scoring,
+        import_status=db_profile.import_status,
+        research_priority=db_profile.research_priority,
+        tags=db_profile.tags or [],
+        imported_associate_call_recommended=db_profile.imported_associate_call_recommended,
+        imported_recommendation_trigger=db_profile.imported_recommendation_trigger,
+        imported_recommended_reason=db_profile.imported_recommended_reason,
+        produced_by=db_profile.produced_by,
+        import_id=db_profile.import_id,
+        created_at=db_profile.created_at,
+        updated_at=db_profile.updated_at,
+    )
+
+
+def get_screening_profile(
+    db: Session,
+    founder_id: str,
+    evaluation_version: str = "associate_screen_v1",
+) -> Optional[db_models.FounderScreeningProfile]:
+    return (
+        db.query(db_models.FounderScreeningProfile)
+        .filter(
+            db_models.FounderScreeningProfile.founder_id == founder_id,
+            db_models.FounderScreeningProfile.evaluation_version == evaluation_version,
+        )
+        .first()
+    )
+
+
+def get_screening_profile_by_external_record_id(
+    db: Session,
+    external_record_id: str,
+) -> Optional[db_models.FounderScreeningProfile]:
+    return (
+        db.query(db_models.FounderScreeningProfile)
+        .filter(db_models.FounderScreeningProfile.external_record_id == external_record_id)
+        .first()
+    )
+
+
+def create_or_update_screening_profile(
+    db: Session,
+    founder_id: str,
+    profile_data: Dict[str, Any],
+    commit: bool = True,
+) -> db_models.FounderScreeningProfile:
+    evaluation_version = profile_data.get("evaluation_version") or "associate_screen_v1"
+    db_profile = get_screening_profile(db, founder_id, evaluation_version=evaluation_version)
+    if db_profile is None and profile_data.get("external_record_id"):
+        db_profile = get_screening_profile_by_external_record_id(db, profile_data["external_record_id"])
+
+    evaluation = evaluate_recommendation(
+        profile_data.get("founder_score"),
+        profile_data.get("vision_product_score"),
+        profile_data.get("differentiation_score"),
+        profile_data.get("traction_score"),
+    )
+
+    payload = {
+        "founder_id": founder_id,
+        "external_record_id": profile_data.get("external_record_id"),
+        "project_name": profile_data.get("project_name"),
+        "project_name_normalized": normalize_text_value(profile_data.get("project_name")),
+        "project_summary": profile_data.get("project_summary"),
+        "founder_role": profile_data.get("founder_role"),
+        "sector": profile_data.get("sector"),
+        "stage": profile_data.get("stage"),
+        "source_type": profile_data.get("source_type"),
+        "institution_or_program": profile_data.get("institution_or_program"),
+        "school_or_lab": profile_data.get("school_or_lab"),
+        "cohort_year": profile_data.get("cohort_year"),
+        "institution_affiliation_basis": profile_data.get("institution_affiliation_basis"),
+        "city": profile_data.get("city"),
+        "city_normalized": normalize_text_value(profile_data.get("city")),
+        "country": profile_data.get("country"),
+        "city_basis": profile_data.get("city_basis"),
+        "city_confidence": profile_data.get("city_confidence"),
+        "target_market_geography": profile_data.get("target_market_geography"),
+        "website_url": profile_data.get("website_url"),
+        "primary_source_url": profile_data.get("primary_source_url"),
+        "source_locator": profile_data.get("source_locator"),
+        "source_date": profile_data.get("source_date"),
+        "funding_status": (
+            profile_data.get("funding_status").value
+            if isinstance(profile_data.get("funding_status"), ScreeningFundingStatus)
+            else profile_data.get("funding_status", ScreeningFundingStatus.UNKNOWN.value)
+        ),
+        "funding_check_as_of": profile_data.get("funding_check_as_of"),
+        "funding_check_confidence": profile_data.get("funding_check_confidence"),
+        "funding_notes": profile_data.get("funding_notes"),
+        "founder_score": profile_data.get("founder_score"),
+        "founder_score_rationale": profile_data.get("founder_score_rationale"),
+        "vision_product_score": profile_data.get("vision_product_score"),
+        "vision_product_rationale": profile_data.get("vision_product_rationale"),
+        "differentiation_score": profile_data.get("differentiation_score"),
+        "differentiation_rationale": profile_data.get("differentiation_rationale"),
+        "traction_score": profile_data.get("traction_score"),
+        "traction_rationale": profile_data.get("traction_rationale"),
+        "evidence_confidence": profile_data.get("evidence_confidence"),
+        "evidence_coverage": profile_data.get("evidence_coverage"),
+        "individual_attribution_confidence": profile_data.get("individual_attribution_confidence"),
+        "evaluation_scope": profile_data.get("evaluation_scope"),
+        "key_evidence": profile_data.get("key_evidence") or [],
+        "counter_evidence": profile_data.get("counter_evidence") or [],
+        "unknowns": profile_data.get("unknowns") or [],
+        "next_diligence_action": profile_data.get("next_diligence_action"),
+        "recommended": evaluation.recommended,
+        "recommendation_trigger": evaluation.trigger.value,
+        "recommended_reason": profile_data.get("recommended_reason") or evaluation.reason,
+        "evaluation_version": evaluation_version,
+        "pedigree_used_in_scoring": bool(profile_data.get("pedigree_used_in_scoring", False)),
+        "import_status": profile_data.get("import_status"),
+        "research_priority": profile_data.get("research_priority"),
+        "tags": profile_data.get("tags") or [],
+        "imported_associate_call_recommended": profile_data.get("imported_associate_call_recommended"),
+        "imported_recommendation_trigger": profile_data.get("imported_recommendation_trigger"),
+        "imported_recommended_reason": profile_data.get("imported_recommended_reason"),
+        "produced_by": profile_data.get("produced_by"),
+        "import_id": profile_data.get("import_id"),
+    }
+
+    if db_profile is None:
+        db_profile = db_models.FounderScreeningProfile(
+            id=f"fsp_{uuid.uuid4().hex[:12]}",
+            **payload,
+        )
+        db.add(db_profile)
+    else:
+        for key, value in payload.items():
+            setattr(db_profile, key, value)
+
+    if commit:
+        db.commit()
+        db.refresh(db_profile)
+    else:
+        db.flush()
+    return db_profile
+
+
+def _build_founder_discovery_query(
+    db: Session,
+    evaluation_version: str = "associate_screen_v1",
+    q: Optional[str] = None,
+    recommended: Optional[bool] = None,
+    city: Optional[str] = None,
+    country: Optional[str] = None,
+    institution_or_program: Optional[str] = None,
+    school_or_lab: Optional[str] = None,
+    source_type: Optional[str] = None,
+    sector: Optional[str] = None,
+    funding_status: Optional[str] = None,
+    cohort_year: Optional[str] = None,
+):
+    query = (
+        db.query(db_models.Founder, db_models.FounderScreeningProfile)
+        .outerjoin(
+            db_models.FounderScreeningProfile,
+            and_(
+                db_models.FounderScreeningProfile.founder_id == db_models.Founder.id,
+                db_models.FounderScreeningProfile.evaluation_version == evaluation_version,
+            ),
+        )
+    )
+    if recommended is True:
+        query = query.filter(db_models.FounderScreeningProfile.recommended.is_(True))
+    elif recommended is False:
+        query = query.filter(
+            or_(
+                db_models.FounderScreeningProfile.id.is_(None),
+                db_models.FounderScreeningProfile.recommended.is_(False),
+            )
+        )
+    if city:
+        query = query.filter(
+            db_models.FounderScreeningProfile.city_normalized == normalize_text_value(city)
+        )
+    if country:
+        query = query.filter(db_models.FounderScreeningProfile.country == country)
+    if institution_or_program:
+        query = query.filter(
+            db_models.FounderScreeningProfile.institution_or_program == institution_or_program
+        )
+    if school_or_lab:
+        query = query.filter(db_models.FounderScreeningProfile.school_or_lab == school_or_lab)
+    if source_type:
+        query = query.filter(db_models.FounderScreeningProfile.source_type == source_type)
+    if sector:
+        query = query.filter(db_models.FounderScreeningProfile.sector == sector)
+    if funding_status:
+        query = query.filter(db_models.FounderScreeningProfile.funding_status == funding_status)
+    if cohort_year:
+        query = query.filter(db_models.FounderScreeningProfile.cohort_year == cohort_year)
+    if q:
+        pattern = f"%{q.strip()}%"
+        query = query.filter(
+            or_(
+                db_models.Founder.name.ilike(pattern),
+                db_models.Founder.current_company.ilike(pattern),
+                db_models.Founder.role.ilike(pattern),
+                db_models.Founder.source_reason.ilike(pattern),
+                db_models.FounderScreeningProfile.project_name.ilike(pattern),
+                db_models.FounderScreeningProfile.project_summary.ilike(pattern),
+                db_models.FounderScreeningProfile.founder_role.ilike(pattern),
+                cast(db_models.FounderScreeningProfile.tags, SAString).ilike(pattern),
+            )
+        )
+    return query
+
+
+def _recommended_order_columns():
+    trigger_rank = case(
+        (
+            db_models.FounderScreeningProfile.recommendation_trigger
+            == RecommendationTrigger.ONE_SCORE_GT_75_AND_TWO_SCORES_GT_50.value,
+            0,
+        ),
+        (
+            db_models.FounderScreeningProfile.recommendation_trigger
+            == RecommendationTrigger.ONE_SCORE_GT_75.value,
+            1,
+        ),
+        (
+            db_models.FounderScreeningProfile.recommendation_trigger
+            == RecommendationTrigger.TWO_SCORES_GT_50.value,
+            2,
+        ),
+        (
+            db_models.FounderScreeningProfile.recommendation_trigger
+            == RecommendationTrigger.NOT_RECOMMENDED.value,
+            3,
+        ),
+        else_=4,
+    )
+    max_score = func.greatest(
+        func.coalesce(db_models.FounderScreeningProfile.founder_score, -1),
+        func.coalesce(db_models.FounderScreeningProfile.vision_product_score, -1),
+        func.coalesce(db_models.FounderScreeningProfile.differentiation_score, -1),
+        func.coalesce(db_models.FounderScreeningProfile.traction_score, -1),
+    )
+    above_50_count = (
+        case((db_models.FounderScreeningProfile.founder_score > 50, 1), else_=0)
+        + case((db_models.FounderScreeningProfile.vision_product_score > 50, 1), else_=0)
+        + case((db_models.FounderScreeningProfile.differentiation_score > 50, 1), else_=0)
+        + case((db_models.FounderScreeningProfile.traction_score > 50, 1), else_=0)
+    )
+    confidence_missing = case((db_models.FounderScreeningProfile.evidence_confidence.is_(None), 1), else_=0)
+    coverage_missing = case((db_models.FounderScreeningProfile.evidence_coverage.is_(None), 1), else_=0)
+    return [
+        trigger_rank.asc(),
+        max_score.desc(),
+        above_50_count.desc(),
+        confidence_missing.asc(),
+        db_models.FounderScreeningProfile.evidence_confidence.desc(),
+        coverage_missing.asc(),
+        db_models.FounderScreeningProfile.evidence_coverage.desc(),
+        db_models.Founder.name.asc(),
+    ]
+
+
+def get_founder_discovery_facets(
+    db: Session,
+    evaluation_version: str = "associate_screen_v1",
+    q: Optional[str] = None,
+    recommended: Optional[bool] = None,
+    city: Optional[str] = None,
+    country: Optional[str] = None,
+    institution_or_program: Optional[str] = None,
+    school_or_lab: Optional[str] = None,
+    source_type: Optional[str] = None,
+    sector: Optional[str] = None,
+    funding_status: Optional[str] = None,
+    cohort_year: Optional[str] = None,
+) -> FounderDiscoveryFacets:
+    query = _build_founder_discovery_query(
+        db,
+        evaluation_version=evaluation_version,
+        q=q,
+        recommended=recommended,
+        city=city,
+        country=country,
+        institution_or_program=institution_or_program,
+        school_or_lab=school_or_lab,
+        source_type=source_type,
+        sector=sector,
+        funding_status=funding_status,
+        cohort_year=cohort_year,
+    )
+
+    def distinct_strings(column) -> List[str]:
+        return [
+            value
+            for (value,) in query.with_entities(column)
+            .filter(column.is_not(None))
+            .distinct()
+            .order_by(column.asc())
+            .all()
+            if value
+        ]
+
+    return FounderDiscoveryFacets(
+        cities=distinct_strings(db_models.FounderScreeningProfile.city),
+        institutions_or_programs=distinct_strings(db_models.FounderScreeningProfile.institution_or_program),
+        schools_or_labs=distinct_strings(db_models.FounderScreeningProfile.school_or_lab),
+        source_types=distinct_strings(db_models.FounderScreeningProfile.source_type),
+        sectors=distinct_strings(db_models.FounderScreeningProfile.sector),
+        funding_statuses=distinct_strings(db_models.FounderScreeningProfile.funding_status),
+        cohort_years=distinct_strings(db_models.FounderScreeningProfile.cohort_year),
+    )
+
+
+def list_founder_discovery_items(
+    db: Session,
+    evaluation_version: str = "associate_screen_v1",
+    q: Optional[str] = None,
+    recommended: Optional[bool] = None,
+    city: Optional[str] = None,
+    country: Optional[str] = None,
+    institution_or_program: Optional[str] = None,
+    school_or_lab: Optional[str] = None,
+    source_type: Optional[str] = None,
+    sector: Optional[str] = None,
+    funding_status: Optional[str] = None,
+    cohort_year: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    sort: Optional[str] = None,
+) -> List[FounderDiscoveryItem]:
+    query = _build_founder_discovery_query(
+        db,
+        evaluation_version=evaluation_version,
+        q=q,
+        recommended=recommended,
+        city=city,
+        country=country,
+        institution_or_program=institution_or_program,
+        school_or_lab=school_or_lab,
+        source_type=source_type,
+        sector=sector,
+        funding_status=funding_status,
+        cohort_year=cohort_year,
+    )
+    if sort == "recommended" or recommended is True:
+        query = query.order_by(*_recommended_order_columns())
+    else:
+        query = query.order_by(desc(db_models.Founder.updated_at), db_models.Founder.name.asc())
+
+    rows = query.offset(offset).limit(limit).all()
+    founder_ids = [db_founder.id for db_founder, _ in rows]
+    opportunity_map: Dict[str, OpportunityScreen] = {}
+    if founder_ids:
+        db_opportunities = (
+            db.query(db_models.Opportunity)
+            .filter(db_models.Opportunity.founder_id.in_(founder_ids))
+            .order_by(db_models.Opportunity.id.asc())
+            .all()
+        )
+        for db_opp in db_opportunities:
+            opportunity_map.setdefault(
+                db_opp.founder_id,
+                opportunity_to_pydantic(db_opp),
+            )
+
+    return [
+        FounderDiscoveryItem(
+            founder=founder_to_pydantic(db, db_founder),
+            profile=screening_profile_to_pydantic(db_profile) if db_profile else None,
+            opportunity=opportunity_map.get(db_founder.id),
+        )
+        for db_founder, db_profile in rows
+    ]
+
+
+def count_founder_discovery_items(
+    db: Session,
+    evaluation_version: str = "associate_screen_v1",
+    q: Optional[str] = None,
+    recommended: Optional[bool] = None,
+    city: Optional[str] = None,
+    country: Optional[str] = None,
+    institution_or_program: Optional[str] = None,
+    school_or_lab: Optional[str] = None,
+    source_type: Optional[str] = None,
+    sector: Optional[str] = None,
+    funding_status: Optional[str] = None,
+    cohort_year: Optional[str] = None,
+) -> int:
+    return _build_founder_discovery_query(
+        db,
+        evaluation_version=evaluation_version,
+        q=q,
+        recommended=recommended,
+        city=city,
+        country=country,
+        institution_or_program=institution_or_program,
+        school_or_lab=school_or_lab,
+        source_type=source_type,
+        sector=sector,
+        funding_status=funding_status,
+        cohort_year=cohort_year,
+    ).count()
+
+
+def get_founder_csv_import_by_checksum(
+    db: Session,
+    file_checksum: str,
+) -> Optional[db_models.FounderCsvImport]:
+    return (
+        db.query(db_models.FounderCsvImport)
+        .filter(db_models.FounderCsvImport.file_checksum == file_checksum)
+        .order_by(db_models.FounderCsvImport.created_at.desc())
+        .first()
+    )
+
+
+def create_founder_csv_import(
+    db: Session,
+    *,
+    file_name: str,
+    file_checksum: str,
+    row_count: int,
+) -> db_models.FounderCsvImport:
+    db_import = db_models.FounderCsvImport(
+        id=f"imp_{uuid.uuid4().hex[:12]}",
+        file_name=file_name,
+        file_checksum=file_checksum,
+        row_count=row_count,
+    )
+    db.add(db_import)
+    db.flush()
+    return db_import
+
+
+def _find_founders_by_linkedin_normalized(db: Session, linkedin_url_normalized: str) -> List[db_models.Founder]:
+    return (
+        db.query(db_models.Founder)
+        .filter(db_models.Founder.linkedin_url_normalized == linkedin_url_normalized)
+        .all()
+    )
+
+
+def _find_profiles_by_name_project_cohort(
+    db: Session,
+    founder_name_normalized: str,
+    project_name_normalized: str,
+    cohort_year: Optional[str],
+) -> List[db_models.FounderScreeningProfile]:
+    return (
+        db.query(db_models.FounderScreeningProfile)
+        .join(db_models.Founder, db_models.Founder.id == db_models.FounderScreeningProfile.founder_id)
+        .filter(
+            func.lower(func.trim(db_models.Founder.name)) == founder_name_normalized,
+            db_models.FounderScreeningProfile.project_name_normalized == project_name_normalized,
+            db_models.FounderScreeningProfile.cohort_year == cohort_year,
+        )
+        .all()
+    )
+
+
+def get_primary_opportunity_for_founder(
+    db: Session,
+    founder_id: str,
+) -> Optional[db_models.Opportunity]:
+    return (
+        db.query(db_models.Opportunity)
+        .filter(db_models.Opportunity.founder_id == founder_id)
+        .order_by(db_models.Opportunity.id.asc())
+        .first()
+    )
+
+
+def ensure_founder_opportunity(
+    db: Session,
+    founder_id: str,
+    next_founder_action: Optional[str],
+) -> db_models.Opportunity:
+    db_opp = get_primary_opportunity_for_founder(db, founder_id)
+    if db_opp is not None:
+        if next_founder_action and not db_opp.next_founder_action:
+            db_opp.next_founder_action = next_founder_action
+            db.flush()
+        return db_opp
+    opp = db_models.Opportunity(
+        id=f"opp_{uuid.uuid4().hex[:12]}",
+        founder_id=founder_id,
+        founder_score=0,
+        founder_confidence=0,
+        founder_market_fit={},
+        team_completeness={},
+        market_posture="neutral",
+        market_confidence=0,
+        idea_vs_market_posture="neutral",
+        idea_vs_market_confidence=0,
+        next_founder_action=next_founder_action,
+        status="SCREENING",
+    )
+    db.add(opp)
+    db.flush()
+    return opp
+
+
+def _resolve_import_match(
+    db: Session,
+    row: Dict[str, Any],
+) -> tuple[Optional[db_models.Founder], Optional[db_models.FounderScreeningProfile], Optional[str]]:
+    matched_founders: Dict[str, db_models.Founder] = {}
+    matched_profiles: Dict[str, Optional[db_models.FounderScreeningProfile]] = {}
+
+    external_record_id = row["external_record_id"]
+    linkedin_url_normalized = row.get("linkedin_url_normalized")
+    founder_name_normalized = row["founder_name_normalized"]
+    project_name_normalized = row["project_name_normalized"]
+    cohort_year = row.get("cohort_year")
+
+    if external_record_id:
+        db_profile = get_screening_profile_by_external_record_id(db, external_record_id)
+        if db_profile is not None:
+            db_founder = get_founder(db, db_profile.founder_id)
+            if db_founder is not None:
+                matched_founders[db_founder.id] = db_founder
+                matched_profiles[db_founder.id] = db_profile
+
+    if linkedin_url_normalized:
+        linkedin_matches = _find_founders_by_linkedin_normalized(db, linkedin_url_normalized)
+        if len(linkedin_matches) > 1:
+            return None, None, "LinkedIn URL matches multiple founders"
+        if linkedin_matches:
+            db_founder = linkedin_matches[0]
+            matched_founders[db_founder.id] = db_founder
+            matched_profiles[db_founder.id] = get_screening_profile(db, db_founder.id, row["evaluation_version"])
+
+    tuple_matches = _find_profiles_by_name_project_cohort(
+        db,
+        founder_name_normalized,
+        project_name_normalized,
+        cohort_year,
+    )
+    if len(tuple_matches) > 1:
+        founder_ids = {match.founder_id for match in tuple_matches}
+        if len(founder_ids) > 1:
+            return None, None, "Founder/project/cohort tuple matches multiple founders"
+    if tuple_matches:
+        db_profile = tuple_matches[0]
+        db_founder = get_founder(db, db_profile.founder_id)
+        if db_founder is not None:
+            matched_founders[db_founder.id] = db_founder
+            matched_profiles[db_founder.id] = db_profile
+
+    if len(matched_founders) > 1:
+        return None, None, "Candidate matches disagree across external id, LinkedIn URL, and founder/project/cohort tuple"
+
+    if not matched_founders:
+        return None, None, None
+
+    founder_id = next(iter(matched_founders.keys()))
+    return matched_founders[founder_id], matched_profiles.get(founder_id), None
+
+
+def bulk_upsert_founders_and_profiles(
+    db: Session,
+    *,
+    rows: List[Dict[str, Any]],
+    file_name: str,
+    file_checksum: str,
+    dry_run: bool = True,
+    force: bool = False,
+) -> CsvImportResult:
+    if not dry_run and not force and get_founder_csv_import_by_checksum(db, file_checksum):
+        raise ValueError("This CSV file has already been imported. Re-run with force=true to import it again.")
+
+    errors: List[CsvImportRowError] = []
+    founders_to_create = 0
+    founders_to_update = 0
+    profiles_to_create = 0
+    profiles_to_update = 0
+
+    matched_rows: List[Dict[str, Any]] = []
+    for row in rows:
+        row_errors: List[CsvImportRowError] = []
+        db_founder, db_profile, conflict = _resolve_import_match(db, row)
+        if conflict:
+            errors.append(
+                CsvImportRowError(
+                    row_number=row["row_number"],
+                    external_record_id=row.get("external_record_id"),
+                    message=conflict,
+                )
+            )
+            continue
+
+        if db_founder is not None:
+            if db_founder.name.strip() != row["founder_name"].strip():
+                row_errors.append(
+                    CsvImportRowError(
+                        row_number=row["row_number"],
+                        external_record_id=row.get("external_record_id"),
+                        field="founder_name",
+                        message="Matched founder has a different name; explicit merge is required.",
+                    )
+                )
+            if (
+                row.get("linkedin_url")
+                and db_founder.linkedin_url
+                and normalize_url_value(db_founder.linkedin_url) != row.get("linkedin_url_normalized")
+            ):
+                row_errors.append(
+                    CsvImportRowError(
+                        row_number=row["row_number"],
+                        external_record_id=row.get("external_record_id"),
+                        field="linkedin_url",
+                        message="Matched founder has a different LinkedIn URL; explicit merge is required.",
+                    )
+                )
+
+        if row_errors:
+            errors.extend(row_errors)
+            continue
+
+        row["matched_founder"] = db_founder
+        row["matched_profile"] = db_profile
+        matched_rows.append(row)
+
+        if db_founder is None:
+            founders_to_create += 1
+        else:
+            founders_to_update += 1
+        if db_profile is None:
+            profiles_to_create += 1
+        else:
+            profiles_to_update += 1
+
+    if errors:
+        invalid_row_numbers = {error.row_number for error in errors}
+        return CsvImportResult(
+            dry_run=dry_run,
+            file_name=file_name,
+            rows_received=len(rows),
+            rows_valid=len(rows) - len(invalid_row_numbers),
+            rows_invalid=len(invalid_row_numbers),
+            founders_to_create=founders_to_create,
+            founders_to_update=founders_to_update,
+            profiles_to_create=profiles_to_create,
+            profiles_to_update=profiles_to_update,
+            rows_skipped=0,
+            errors=errors,
+        )
+
+    if dry_run:
+        return CsvImportResult(
+            dry_run=True,
+            file_name=file_name,
+            rows_received=len(rows),
+            rows_valid=len(rows),
+            rows_invalid=0,
+            founders_to_create=founders_to_create,
+            founders_to_update=founders_to_update,
+            profiles_to_create=profiles_to_create,
+            profiles_to_update=profiles_to_update,
+            rows_skipped=0,
+            errors=[],
+        )
+
+    created_founder_ids: List[str] = []
+    updated_founder_ids: List[str] = []
+    created_profile_ids: List[str] = []
+    updated_profile_ids: List[str] = []
+
+    db_import = create_founder_csv_import(
+        db,
+        file_name=file_name,
+        file_checksum=file_checksum,
+        row_count=len(rows),
+    )
+
+    for row in matched_rows:
+        db_founder = row["matched_founder"]
+        db_profile = row["matched_profile"]
+        if db_founder is None:
+            founder_id = f"fnd_{uuid.uuid4().hex[:12]}"
+            db_founder = db_models.Founder(
+                id=founder_id,
+                name=row["founder_name"],
+                email=create_placeholder_import_email(row.get("external_record_id"), founder_id),
+                current_company=row.get("project_name"),
+                role=row.get("founder_role"),
+                location=row.get("founder_location"),
+                location_city=row.get("city"),
+                linkedin_url=row.get("linkedin_url"),
+                linkedin_url_normalized=row.get("linkedin_url_normalized"),
+                github_url=row.get("github_url"),
+                source_reason=row.get("project_summary"),
+                source_url=row.get("primary_source_url"),
+                enrichment_policy=EnrichmentPolicy.MANUAL.value,
+            )
+            db.add(db_founder)
+            db.flush()
+            created_founder_ids.append(db_founder.id)
+        else:
+            if not db_founder.current_company and row.get("project_name"):
+                db_founder.current_company = row["project_name"]
+            if not db_founder.role and row.get("founder_role"):
+                db_founder.role = row["founder_role"]
+            if not db_founder.location_city and row.get("city"):
+                db_founder.location_city = row["city"]
+            if not db_founder.location and row.get("founder_location"):
+                db_founder.location = row["founder_location"]
+            if not db_founder.linkedin_url and row.get("linkedin_url"):
+                db_founder.linkedin_url = row["linkedin_url"]
+                db_founder.linkedin_url_normalized = row.get("linkedin_url_normalized")
+            if not db_founder.github_url and row.get("github_url"):
+                db_founder.github_url = row["github_url"]
+            if not db_founder.source_url and row.get("primary_source_url"):
+                db_founder.source_url = row["primary_source_url"]
+            if not db_founder.source_reason and row.get("project_summary"):
+                db_founder.source_reason = row["project_summary"]
+            if db_founder.enrichment_policy == EnrichmentPolicy.AUTO.value:
+                db_founder.enrichment_policy = EnrichmentPolicy.MANUAL.value
+            db.flush()
+            updated_founder_ids.append(db_founder.id)
+
+        profile_payload = dict(row["profile_data"])
+        profile_payload["import_id"] = db_import.id
+        profile_payload["produced_by"] = profile_payload.get("produced_by") or "csv_import"
+        saved_profile = create_or_update_screening_profile(
+            db,
+            db_founder.id,
+            profile_payload,
+            commit=False,
+        )
+        if db_profile is None:
+            created_profile_ids.append(saved_profile.id)
+        else:
+            updated_profile_ids.append(saved_profile.id)
+
+        ensure_founder_opportunity(db, db_founder.id, profile_payload.get("next_diligence_action"))
+
+    db.commit()
+
+    return CsvImportResult(
+        dry_run=False,
+        file_name=file_name,
+        rows_received=len(rows),
+        rows_valid=len(rows),
+        rows_invalid=0,
+        founders_to_create=founders_to_create,
+        founders_to_update=founders_to_update,
+        profiles_to_create=profiles_to_create,
+        profiles_to_update=profiles_to_update,
+        rows_skipped=0,
+        errors=[],
+        import_id=db_import.id,
+        created_founder_ids=created_founder_ids,
+        updated_founder_ids=updated_founder_ids,
+        created_profile_ids=created_profile_ids,
+        updated_profile_ids=updated_profile_ids,
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -825,6 +1674,8 @@ def list_founders_below_confidence(
     )
     candidates = []
     for f in founders:
+        if f.enrichment_policy != EnrichmentPolicy.AUTO.value:
+            continue
         if never_enriched_only and f.enrichment_attempts > 0:
             continue
         snapshot = (
@@ -860,6 +1711,8 @@ def count_founders_blocking_sourcing(db: Session, threshold: float) -> int:
     founders = db.query(db_models.Founder).all()
     count = 0
     for f in founders:
+        if f.enrichment_policy != EnrichmentPolicy.AUTO.value:
+            continue
         if f.enrichment_attempts > 0:
             continue
         snapshot = (

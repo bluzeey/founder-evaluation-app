@@ -56,7 +56,7 @@ def clean_tables():
     try:
         db.execute(
             text(
-                "TRUNCATE claims, opportunities, score_snapshots, evidence_items, "
+                "TRUNCATE founder_screening_profiles, founder_csv_imports, claims, opportunities, score_snapshots, evidence_items, "
                 "social_media_backgrounds, founder_pool_items, theses, founders CASCADE"
             )
         )

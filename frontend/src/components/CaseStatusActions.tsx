@@ -68,10 +68,35 @@ export function CaseStatusActions({
 
   const transitions = allowedTransitions(status);
   const showDecisionQueue = status !== "PARTNER_REVIEW";
+  const canMoveToDd = transitions.includes("DILIGENCE") && status !== "DILIGENCE";
+  const canScheduleAssociateCall =
+    transitions.includes("ASSOCIATE_REVIEW") && status !== "ASSOCIATE_REVIEW";
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
+        {canMoveToDd && (
+          <button
+            onClick={() => apply("DILIGENCE", "dd")}
+            disabled={!!loadingKey}
+            className="flex items-center gap-2 rounded-sm border border-concrete/30 bg-paper px-3 py-1.5 text-sm font-sans font-medium text-ink hover:bg-manila/40 disabled:opacity-50"
+          >
+            {loadingKey === "dd" ? <Loader2 size={14} className="animate-spin" /> : <ChevronRight size={14} />}
+            Start / continue DD
+          </button>
+        )}
+
+        {canScheduleAssociateCall && (
+          <button
+            onClick={() => apply("ASSOCIATE_REVIEW", "associate-call")}
+            disabled={!!loadingKey}
+            className="flex items-center gap-2 rounded-sm border border-action/30 bg-action/10 px-3 py-1.5 text-sm font-sans font-medium text-action hover:bg-action/20 disabled:opacity-50"
+          >
+            {loadingKey === "associate-call" ? <Loader2 size={14} className="animate-spin" /> : <ChevronRight size={14} />}
+            Schedule Associate Call
+          </button>
+        )}
+
         {showDecisionQueue && (
           <button
             onClick={() => apply("PARTNER_REVIEW", "queue")}
@@ -79,7 +104,7 @@ export function CaseStatusActions({
             className="flex items-center gap-2 rounded-sm bg-action px-3 py-1.5 text-sm font-sans font-medium text-paper hover:bg-action-dark disabled:opacity-50"
           >
             {loadingKey === "queue" ? <Loader2 size={14} className="animate-spin" /> : <ChevronRight size={14} />}
-            Move to decision queue
+            Move to Partner Review
           </button>
         )}
 
