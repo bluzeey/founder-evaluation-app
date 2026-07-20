@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { Loader2, Search } from "lucide-react";
 import { FourScoreStrip, scoreValue } from "@/features/founders/FourScoreStrip";
 import { RecommendationBadge } from "@/features/founders/RecommendationBadge";
+import { Pagination } from "@/components/Pagination";
 import { useFounderDiscovery } from "@/features/founders/useFounderDiscovery";
 import type { BackendFounderDiscoveryItem, BackendFounderScreeningProfile } from "@/types/backend";
 
@@ -34,8 +35,6 @@ export function FounderListPage({
   const items = page?.items ?? [];
   const offset = page?.offset ?? 0;
   const limit = page?.limit ?? 50;
-  const hasPrevious = offset > 0;
-  const hasNext = page ? offset + limit < page.total : false;
 
   return (
     <div className="space-y-5">
@@ -159,22 +158,7 @@ export function FounderListPage({
         </div>
       )}
 
-      <div className="flex items-center justify-end gap-2">
-        <button
-          className="rounded-sm border border-concrete/30 bg-paper px-3 py-1.5 text-sm disabled:opacity-50"
-          disabled={!hasPrevious}
-          onClick={() => goToOffset(offset - limit)}
-        >
-          Previous
-        </button>
-        <button
-          className="rounded-sm border border-concrete/30 bg-paper px-3 py-1.5 text-sm disabled:opacity-50"
-          disabled={!hasNext}
-          onClick={() => goToOffset(offset + limit)}
-        >
-          Next
-        </button>
-      </div>
+      <Pagination offset={offset} limit={limit} total={page?.total ?? 0} onOffsetChange={goToOffset} />
     </div>
   );
 }

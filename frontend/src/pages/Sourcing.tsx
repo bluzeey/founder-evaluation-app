@@ -5,7 +5,6 @@ import {
   RotateCw,
   CheckCircle2,
   XCircle,
-  Clock,
   AlertCircle,
   Loader2,
   Database,
@@ -393,52 +392,6 @@ export default function Sourcing() {
         </div>
       </div>
 
-      {/* Jobs */}
-      <div className="panel space-y-4">
-        <h3 className="font-display text-lg font-semibold text-ink">Recent jobs</h3>
-        {(status?.recent_jobs.length ?? 0) === 0 && !loading && (
-          <div className="text-sm text-concrete">No jobs yet. Click “Source now” to run the agent.</div>
-        )}
-        <div className="space-y-2">
-          {(status?.recent_jobs ?? []).map((job) => (
-            <div
-              key={job.id}
-              className={`flex flex-col gap-2 rounded-sm border p-3 md:flex-row md:items-center md:justify-between ${
-                job.status === "completed"
-                  ? "border-verified/20 bg-verified/5"
-                  : job.status === "failed"
-                    ? "border-contradiction/20 bg-contradiction/5"
-                    : "border-concrete/20 bg-paper"
-              }`}
-            >
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-sans text-sm font-semibold text-ink">{job.id}</span>
-                  <JobStatusBadge status={job.status} />
-                </div>
-                <div className="text-xs text-concrete">
-                  Progress: {job.progress}% · Found {job.leads_found} · Added {job.leads_added} · Skipped{" "}
-                  {job.leads_skipped}
-                </div>
-                {job.error_message && (
-                  <div className="text-xs text-contradiction">{job.error_message}</div>
-                )}
-              </div>
-              <div className="text-xs text-concrete">
-                {job.started_at ? (
-                  <span className="flex items-center gap-1">
-                    <Clock size={12} />
-                    {formatTime(job.started_at)}
-                  </span>
-                ) : (
-                  "Pending"
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
       {/* Pool */}
       <div className="panel space-y-4">
         <h3 className="font-display text-lg font-semibold text-ink">Founder pool</h3>
@@ -481,23 +434,6 @@ export default function Sourcing() {
         </div>
       </div>
     </div>
-  );
-}
-
-function JobStatusBadge({ status }: { status: string }) {
-  const styles: Record<string, string> = {
-    pending: "bg-concrete/10 text-concrete",
-    running: "bg-action/10 text-action",
-    searching: "bg-action/10 text-action",
-    deduplicating: "bg-action/10 text-action",
-    persisting: "bg-action/10 text-action",
-    completed: "bg-verified/10 text-verified",
-    failed: "bg-contradiction/10 text-contradiction",
-  };
-  return (
-    <span className={`rounded-sm px-1.5 py-0.5 text-[10px] font-mono font-semibold uppercase ${styles[status] ?? styles.pending}`}>
-      {status}
-    </span>
   );
 }
 

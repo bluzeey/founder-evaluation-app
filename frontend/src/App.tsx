@@ -17,6 +17,7 @@ import Decisions from "@/pages/Decisions";
 import Thesis from "@/pages/Thesis";
 import Validation from "@/pages/Validation";
 import Sourcing from "@/pages/Sourcing";
+import FounderImport from "@/pages/FounderImport";
 
 const NAV = [
   { path: "/discovery", label: "Discovery", icon: Inbox },
@@ -78,6 +79,7 @@ function App() {
               <Route path="/" element={<Navigate to="/discovery" replace />} />
               <Route path="/discovery" element={<Discovery />} />
               <Route path="/recommended" element={<Recommended />} />
+              <Route path="/founders/import" element={<FounderImport />} />
               <Route path="/sourcing" element={<Sourcing />} />
               <Route path="/cases" element={<Cases />} />
               <Route path="/cases/:caseId" element={<DealRoom />} />
