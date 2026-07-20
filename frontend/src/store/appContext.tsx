@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from "react";
 import { api } from "@/api/client";
-import type { Role, User, CaseDecision, CaseStatus } from "@/domain/types";
+import type { CaseStatus } from "@/domain/types";
 import type { BackendThesis, CreateThesisRequest } from "@/types/backend";
 import type { ReactNode } from "react";
 
@@ -8,11 +8,9 @@ export type CaseOverride = {
   status?: CaseStatus;
   owner?: string;
   nextAction?: string;
-  decisions?: CaseDecision[];
 };
 
 export type AppState = {
-  user: User;
   caseOverrides: Record<string, CaseOverride>;
   theses: BackendThesis[];
   activeThesisId: string | null;
@@ -23,7 +21,6 @@ export type AppState = {
 const STORAGE_KEY = "vc-brain-demo-state-v1";
 
 const defaultState: AppState = {
-  user: { id: "u-analyst", name: "Jordan Lee", role: "ANALYST" },
   caseOverrides: {},
   theses: [],
   activeThesisId: null,
@@ -34,10 +31,7 @@ const defaultState: AppState = {
 const AppContext = createContext<{
   state: AppState;
   activeThesis: BackendThesis | null;
-  setRole: (role: Role) => void;
-  setUserName: (name: string) => void;
   setCaseOverride: (caseId: string, patch: Partial<CaseOverride>) => void;
-  recordDecision: (caseId: string, decision: CaseDecision) => void;
   setActiveThesis: (id: string | null) => void;
   refreshTheses: () => Promise<void>;
   createThesis: (req: CreateThesisRequest) => Promise<BackendThesis>;
@@ -80,14 +74,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     refreshTheses();
   }, [refreshTheses]);
 
-  const setRole = useCallback((role: Role) => {
-    setState((prev) => ({ ...prev, user: { ...prev.user, role } }));
-  }, []);
-
-  const setUserName = useCallback((name: string) => {
-    setState((prev) => ({ ...prev, user: { ...prev.user, name } }));
-  }, []);
-
   const setCaseOverride = useCallback((caseId: string, patch: Partial<CaseOverride>) => {
     setState((prev) => ({
       ...prev,
@@ -96,22 +82,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         [caseId]: { ...prev.caseOverrides[caseId], ...patch },
       },
     }));
-  }, []);
-
-  const recordDecision = useCallback((caseId: string, decision: CaseDecision) => {
-    setState((prev) => {
-      const existing = prev.caseOverrides[caseId]?.decisions || [];
-      return {
-        ...prev,
-        caseOverrides: {
-          ...prev.caseOverrides,
-          [caseId]: {
-            ...prev.caseOverrides[caseId],
-            decisions: [...existing, decision],
-          },
-        },
-      };
-    });
   }, []);
 
   const setActiveThesis = useCallback((id: string | null) => {
@@ -138,10 +108,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       value={{
         state,
         activeThesis,
-        setRole,
-        setUserName,
         setCaseOverride,
-        recordDecision,
         setActiveThesis,
         refreshTheses,
         createThesis,
@@ -159,16 +126,12 @@ export function useApp() {
   return ctx;
 }
 
-export function useRole() {
-  return useApp().state.user.role;
-}
-
 function loadState(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return defaultState;
     const parsed = JSON.parse(raw) as AppState;
-    return { ...defaultState, ...parsed, user: { ...defaultState.user, ...parsed.user } };
+    return { ...defaultState, ...parsed };
   } catch {
     return defaultState;
   }

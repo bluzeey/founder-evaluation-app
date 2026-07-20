@@ -13,7 +13,6 @@ export type { SpecialistOutput, ValidationOutput, SkepticOutput };
 export interface AgentContext {
   investmentCase: InvestmentCase;
   claims: Claim[];
-  role: string;
 }
 
 export interface LeadAnalystOutput {

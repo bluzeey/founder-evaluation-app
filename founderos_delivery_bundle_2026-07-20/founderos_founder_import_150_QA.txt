@@ -1,0 +1,39 @@
+{
+  "rows": 150,
+  "columns": 51,
+  "unique_record_ids": 150,
+  "unique_project_names_casefolded": 52,
+  "program_counts": {
+    "MIT delta v 2025": 52,
+    "Harvard Innovation Labs / 2026 President’s Innovation Challenge": 24,
+    "TreeHacks 2026": 66,
+    "HackUMass XIII": 4,
+    "LA Hacks 2026": 4
+  },
+  "source_type_counts": {
+    "innovation_lab_accelerator": 52,
+    "university_innovation_challenge": 24,
+    "hackathon": 74
+  },
+  "funding_status_counts": {
+    "no_public_institutional_funding_found": 122,
+    "non_dilutive_grant_or_prize_only": 28
+  },
+  "recommendation_counts": {
+    "true": 150
+  },
+  "recommendation_trigger_counts": {
+    "ONE_SCORE_GT_75_AND_TWO_SCORES_GT_50": 137,
+    "TWO_SCORES_GT_50": 13
+  },
+  "duplicate_record_ids": [],
+  "duplicate_founder_names_casefolded": [],
+  "missing_primary_source_url": 0,
+  "missing_project_summary": 0,
+  "invalid_or_mismatched_rows": 0,
+  "validation_error_count": 0,
+  "validation_errors": [],
+  "has_final_score_column": false,
+  "pedigree_flags_all_false": true,
+  "formula_injection_prefixes_found": 0
+}

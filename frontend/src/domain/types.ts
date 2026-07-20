@@ -200,25 +200,6 @@ export type TalentSignal = {
   caseId?: string;
 };
 
-export type Role = "ANALYST" | "ASSOCIATE" | "PARTNER";
-
-export type DecisionOption = "INVEST" | "DECLINE" | "MONITOR" | "REQUEST_EVIDENCE";
-
-export type CaseDecision = {
-  caseId: string;
-  role: Role;
-  decision: DecisionOption;
-  overrideReason?: string;
-  requestedEvidence?: string;
-  recordedAt: string;
-};
-
-export type User = {
-  id: string;
-  name: string;
-  role: Role;
-};
-
 export type Duration = {
   totalSeconds: number;
   days: number;

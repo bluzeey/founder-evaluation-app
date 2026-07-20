@@ -1,6 +1,5 @@
 import { Routes, Route, Link, Navigate, useLocation } from "react-router-dom";
 import { AppProvider } from "@/store/appContext";
-import { RoleSwitcher } from "@/components/RoleSwitcher";
 import {
   Inbox,
   FolderOpen,
@@ -34,11 +33,13 @@ function App() {
       <div className="flex min-h-screen bg-canvas">
         {/* File rail */}
         <aside className="sticky top-0 z-20 flex h-screen w-16 flex-col border-r border-concrete/20 bg-manila shadow-paper lg:w-56">
-          <div className="flex h-16 items-center justify-center border-b border-concrete/20 px-4 lg:justify-start">
+          <div className="flex h-16 items-center justify-center gap-2.5 border-b border-concrete/20 px-4 lg:justify-start">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-action shadow-paper">
+              <span className="font-display text-lg font-bold leading-none text-paper">F</span>
+            </div>
             <span className="hidden font-display text-lg font-bold tracking-tight text-ink lg:block">
-              Seed Engine
+              Founder<span className="text-action">OS</span>
             </span>
-            <span className="block font-display text-sm font-bold text-ink lg:hidden">SE</span>
           </div>
 
           <nav className="flex flex-1 flex-col gap-1 py-4">
@@ -58,9 +59,6 @@ function App() {
             })}
           </nav>
 
-          <div className="border-t border-concrete/20 p-4">
-            <RoleSwitcher />
-          </div>
         </aside>
 
         {/* Main workspace */}

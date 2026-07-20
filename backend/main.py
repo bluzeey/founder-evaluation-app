@@ -34,7 +34,6 @@ from models import (
     FounderMarketFit,
     TeamCompleteness,
     Claim,
-    TrustStatus,
     AssessmentModule,
     GraderOutput,
     Decision,
@@ -1032,33 +1031,6 @@ def get_diligence(opportunity_id: str, db: Session = Depends(get_db)):
     # trigger) can be attributed correctly.
     db_opp = crud.get_opportunity(db, opportunity_id)
     founder_id = db_opp.founder_id if db_opp else None
-
-    if not claims:
-        claims = [
-            Claim(
-                id=f"clm_{uuid.uuid4().hex[:8]}",
-                opportunity_id=opportunity_id,
-                founder_id=founder_id,
-                claim="₹20 lakh ARR",
-                source="Pitch deck slide 8",
-                trust_status=TrustStatus.FOUNDER_REPORTED,
-                confidence=0.35,
-                contradiction="Bank statement not provided",
-                owner="Diligence reviewer",
-                next_action="Request bank statement or customer reference",
-            ),
-            Claim(
-                id=f"clm_{uuid.uuid4().hex[:8]}",
-                opportunity_id=opportunity_id,
-                founder_id=founder_id,
-                claim="15 active customers",
-                source="Application form",
-                trust_status=TrustStatus.SUPPORTED,
-                confidence=0.65,
-                next_action="Verify with two customer references",
-            ),
-        ]
-        crud.create_claims(db, claims)
 
     # If the founder is still at cold-start, queue an AI estimate so the
     # score breakdown populates from the claims + source signal. Non-blocking.

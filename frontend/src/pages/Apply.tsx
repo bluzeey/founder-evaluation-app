@@ -2,8 +2,6 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { FileText, CheckCircle2, Loader2, AlertCircle, Upload } from "lucide-react";
 import { extractDeck } from "@/agents/deckExtractor";
-import { claimsFromDeck } from "@/agents/claimExtractor";
-import { DeckClaimTable } from "@/components/DeckClaimTable";
 import { api } from "@/api/client";
 import type { DeckExtractionResult } from "@/domain/types";
 import type { ApiError } from "@/types/backend";
@@ -69,8 +67,6 @@ export default function Apply() {
       setLoading(false);
     }
   };
-
-  const deckClaims = extraction ? claimsFromDeck("new-application", extraction) : [];
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -197,7 +193,7 @@ export default function Apply() {
               </div>
               <div className="rounded-sm border border-concrete/20 bg-paper p-2">
                 <div className="text-concrete">Claims</div>
-                <div className="font-display font-semibold text-ink">{deckClaims.length}</div>
+                <div className="font-display font-semibold text-ink">{extraction.slides.reduce((n, s) => n + s.claims.length, 0)}</div>
               </div>
               <div className="rounded-sm border border-concrete/20 bg-paper p-2">
                 <div className="text-concrete">Missing sections</div>
@@ -213,16 +209,6 @@ export default function Apply() {
           </div>
         )}
       </form>
-
-      {extraction && (
-        <div className="panel space-y-4">
-          <h3 className="font-display text-lg font-semibold text-ink">Sample deck claims</h3>
-          <DeckClaimTable claims={deckClaims} />
-          <div className="text-xs text-concrete">
-            Projections and assumptions are shown as distinct from verified facts. Click a claim to see its slide citation.
-          </div>
-        </div>
-      )}
 
       <div className="panel space-y-4">
         <h3 className="font-display text-lg font-semibold text-ink">Application follow-up</h3>
