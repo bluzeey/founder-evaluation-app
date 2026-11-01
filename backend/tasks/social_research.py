@@ -4,9 +4,9 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from celery_app import app
+from ai_policy import manual_allowed, skipped_manual_required
 from database import SessionLocal
 import crud
-from estimation import estimate_founder_scores
 from models import SocialMediaBackground
 from research import SocialAgent, create_social_background
 from scoring import calculate_founder_score
@@ -58,12 +58,16 @@ def research_social_background(
     linkedin_url: Optional[str],
     github_url: Optional[str],
     auto_score: bool = True,
+    manual_intent: Optional[str] = None,
+    manual_task_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Celery task that researches a founder's LinkedIn/GitHub footprint.
 
     Stores the SocialMediaBackground in the database and optionally recalculates the
     founder score from the extracted evidence.
     """
+    if not manual_allowed(manual_intent, ("social", "enrich"), founder_id, self.request.id or manual_task_id):
+        return skipped_manual_required(founder_id=founder_id)
     db = SessionLocal()
     try:
         pending_id = f"soc_{uuid.uuid4().hex[:8]}"
@@ -122,8 +126,6 @@ def research_social_background(
                     db_opp.founder_confidence = score_snapshot.overall_confidence
                 db.commit()
 
-            # Fill any remaining unknown/low-confidence dimensions with AI estimates.
-            estimate_founder_scores(founder_id, db=db)
 
         crud.update_social_background(db, background)
         logger.info(

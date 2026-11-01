@@ -1,7 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
 import {
-  Zap,
-  Play,
   RotateCw,
   CheckCircle2,
   XCircle,
@@ -9,6 +7,7 @@ import {
   Loader2,
   Database,
 } from "lucide-react";
+import { ManualAIAction, ManualModeIndicator } from "@/components/ManualAI";
 import { api } from "@/api/client";
 import { useApp } from "@/store/appContext";
 import { useAdaptivePolling } from "@/hooks/useAdaptivePolling";
@@ -90,45 +89,6 @@ export default function Sourcing() {
     }
   };
 
-  const handleRunNow = async (thesisId: string) => {
-    setActionId(`run-${thesisId}`);
-    try {
-      await api.sourcing.runNow(thesisId);
-      await refresh();
-    } catch (err) {
-      const e = err as ApiError;
-      setError(e.message || "Run failed");
-    } finally {
-      setActionId(null);
-    }
-  };
-
-  const handleRefreshPool = async (thesisId?: string) => {
-    setActionId(`refresh-${thesisId ?? "all"}`);
-    try {
-      await api.pool.refresh(thesisId);
-      await refresh();
-    } catch (err) {
-      const e = err as ApiError;
-      setError(e.message || "Refresh failed");
-    } finally {
-      setActionId(null);
-    }
-  };
-
-  const toggleSchedule = async (schedule: BackendSourcingSchedule) => {
-    setActionId(`toggle-${schedule.id}`);
-    try {
-      await api.sourcing.updateSchedule(schedule.id, { enabled: !schedule.enabled });
-      await refresh();
-    } catch (err) {
-      const e = err as ApiError;
-      setError(e.message || "Toggle failed");
-    } finally {
-      setActionId(null);
-    }
-  };
-
   const handleAddSource = async (thesisId: string, scheduleId: string) => {
     const draft = newSourceByThesis[thesisId];
     if (!draft || !draft.keywords.trim()) return;
@@ -173,7 +133,7 @@ export default function Sourcing() {
           <div className="label mb-1">Sourcing control room</div>
           <h1 className="text-2xl font-bold text-ink">AI sourcing agent</h1>
           <p className="text-sm text-concrete">
-            Schedules, jobs, and pool recommendations from the live backend.
+            Run sourcing manually and review existing jobs and recommendations.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -196,6 +156,7 @@ export default function Sourcing() {
         </div>
       </div>
 
+      <ManualModeIndicator />
       {seedSummary && (
         <div className="rounded-sm border border-verified/30 bg-verified/10 p-3 text-sm text-verified">
           <CheckCircle2 size={16} className="inline" /> {seedSummary}
@@ -237,15 +198,15 @@ export default function Sourcing() {
           </div>
         </div>
         <div className="rounded-sm border border-concrete/20 bg-paper p-4">
-          <div className="label">Schedules</div>
+          <div className="label">Saved source settings</div>
           <div className="mt-1 font-display text-2xl font-bold text-ink">
             {loading ? "—" : schedules.length}
           </div>
         </div>
         <div className="rounded-sm border border-concrete/20 bg-paper p-4">
-          <div className="label">Last dispatch</div>
+          <div className="label">Automatic sourcing</div>
           <div className="mt-1 text-sm font-medium text-ink">
-            {status?.last_dispatch_at ? formatTime(status.last_dispatch_at) : "Never"}
+            Off · manual runs only
           </div>
         </div>
       </div>
@@ -253,20 +214,14 @@ export default function Sourcing() {
       {/* Schedules */}
       <div className="panel space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="font-display text-lg font-semibold text-ink">Sourcing schedules</h3>
-          <button
-            onClick={() => handleRefreshPool(activeThesis?.id ?? theses[0]?.id)}
-            disabled={actionId?.startsWith("refresh-") || theses.length === 0}
-            className="flex items-center gap-2 rounded-sm border border-concrete/30 bg-paper px-3 py-1.5 text-sm font-sans font-medium text-ink hover:bg-manila/40 disabled:opacity-50"
-          >
-            {actionId?.startsWith("refresh-") ? <Loader2 size={16} className="animate-spin" /> : <RotateCw size={16} />}
-            Refresh pool
-          </button>
+          <h3 className="font-display text-lg font-semibold text-ink">Manual sourcing settings</h3>
+          <ManualAIAction label="Run AI pool sourcing" disabled={theses.length === 0} onComplete={refresh}
+            run={() => api.pool.refresh(activeThesis?.id ?? theses[0]?.id)} />
         </div>
 
         {schedules.length === 0 && !loading && (
           <div className="text-sm text-concrete">
-            No schedules yet. Seed to create a default schedule, or trigger a run for a thesis.
+            No source settings saved yet. You can still run sourcing once for a thesis.
           </div>
         )}
 
@@ -286,50 +241,13 @@ export default function Sourcing() {
                     </div>
                     {schedule && (
                       <div className="mt-1 text-xs text-concrete">
-                        Every {formatInterval(schedule.interval_seconds)} · Max {schedule.max_leads_per_run} leads
+                        Saved sources for manual runs
                       </div>
                     )}
                   </div>
                   <div className="flex items-center gap-2">
-                    {schedule ? (
-                      <>
-                        <button
-                          onClick={() => toggleSchedule(schedule)}
-                          disabled={actionId === `toggle-${schedule.id}`}
-                          className={`flex items-center gap-2 rounded-sm px-3 py-1.5 text-sm font-sans font-medium ${
-                            schedule.enabled
-                              ? "border border-verified/30 bg-verified/10 text-verified hover:bg-verified/20"
-                              : "border border-concrete/30 bg-paper text-concrete hover:bg-manila/40"
-                          } disabled:opacity-50`}
-                        >
-                          {actionId === `toggle-${schedule.id}` ? (
-                            <Loader2 size={16} className="animate-spin" />
-                          ) : schedule.enabled ? (
-                            <CheckCircle2 size={16} />
-                          ) : (
-                            <XCircle size={16} />
-                          )}
-                          {schedule.enabled ? "Enabled" : "Disabled"}
-                        </button>
-                        <button
-                          onClick={() => handleRunNow(thesis.id)}
-                          disabled={actionId === `run-${thesis.id}`}
-                          className="flex items-center gap-2 rounded-sm bg-action px-3 py-1.5 text-sm font-sans font-medium text-paper hover:bg-action-dark disabled:opacity-50"
-                        >
-                          {actionId === `run-${thesis.id}` ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-                          Source now
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        onClick={() => handleRunNow(thesis.id)}
-                        disabled={actionId === `run-${thesis.id}`}
-                        className="flex items-center gap-2 rounded-sm bg-action px-3 py-1.5 text-sm font-sans font-medium text-paper hover:bg-action-dark disabled:opacity-50"
-                      >
-                        {actionId === `run-${thesis.id}` ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
-                        Run once
-                      </button>
-                    )}
+                    <ManualAIAction label="Run AI sourcing" onComplete={refresh}
+                      run={() => api.sourcing.runNow(thesis.id)} />
                   </div>
                 </div>
 
@@ -448,18 +366,4 @@ function PoolStatusBadge({ status }: { status: string }) {
       {status}
     </span>
   );
-}
-
-function formatTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
-}
-
-function formatInterval(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
-  return `${Math.round(seconds / 3600)}h`;
 }

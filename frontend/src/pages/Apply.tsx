@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { CheckCircle2, Loader2, AlertCircle, Upload } from "lucide-react";
+import { ManualModeIndicator } from "@/components/ManualAI";
 import { api } from "@/api/client";
 import type { ApiError } from "@/types/backend";
 
@@ -50,10 +51,11 @@ export default function Apply() {
         <div>
           <div className="label mb-1">Inbound application</div>
           <h1 className="text-2xl font-bold text-ink">Drop a deck on the desk</h1>
-          <p className="text-sm text-concrete">Upload a deck and answer follow-up questions. Every answer becomes a claim.</p>
+          <p className="text-sm text-concrete">Save a deck as text and answer follow-up questions. AI can be run manually from the case page.</p>
         </div>
       </div>
 
+      <ManualModeIndicator />
       <form onSubmit={handleSubmit} className="panel space-y-5">
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
           <div>

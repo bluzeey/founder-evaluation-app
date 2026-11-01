@@ -8,6 +8,7 @@ from database import Base, _normalize_database_url
 
 # Import all models so Alembic can autogenerate migrations.
 import db_models  # noqa: F401
+from owner_auth import AUTH_METADATA
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -20,12 +21,14 @@ if config.config_file_name is not None:
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-target_metadata = Base.metadata
+target_metadata = [Base.metadata, AUTH_METADATA]
 
 # Allow DATABASE_URL to override the alembic.ini URL.
 database_url = os.environ.get("DATABASE_URL")
 if database_url:
-    config.set_main_option("sqlalchemy.url", _normalize_database_url(database_url))
+    # ConfigParser interprets percent signs; preserve URL-encoded credentials
+    # and socket paths when passing the URL through Alembic's configuration.
+    config.set_main_option("sqlalchemy.url", _normalize_database_url(database_url).replace("%", "%%"))
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

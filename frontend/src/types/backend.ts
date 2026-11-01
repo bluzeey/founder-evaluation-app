@@ -405,7 +405,7 @@ export type CreateFounderRequest = {
 export type UploadDeckResponse = {
   opportunity_id: string;
   founder_id?: string;
-  task_id: string;
+  task_id: string | null;
   status: string;
 };
 

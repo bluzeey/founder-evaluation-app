@@ -1,17 +1,17 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { AlertTriangle, ArrowLeft, Github, Linkedin, Loader2, Upload } from "lucide-react";
 import { CaseStatusBadge } from "@/components/StatusBadge";
 import { CaseStatusActions } from "@/components/CaseStatusActions";
 import { FourScoreStrip } from "@/features/founders/FourScoreStrip";
 import { RecommendationBadge } from "@/features/founders/RecommendationBadge";
+import { ManualAIAction, ManualModeIndicator, ManualDeckExtraction } from "@/components/ManualAI";
 import { api, invalidateCache } from "@/api/client";
 import { useAdaptivePolling } from "@/hooks/useAdaptivePolling";
 import type {
   BackendOpportunity,
   BackendFounder,
   BackendClaim,
-  BackendScoreSnapshot,
   BackendFounderScreeningProfile,
   ApiError,
 } from "@/types/backend";
@@ -26,20 +26,6 @@ export default function DealRoom() {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [estimating, setEstimating] = useState(false);
-  const [enriching, setEnriching] = useState(false);
-  const estimateTriggeredRef = useRef<string | null>(null);
-  const estimateStartedAt = useRef(0);
-  const enrichStartedAt = useRef(0);
-
-  useEffect(() => {
-    if (estimating) estimateStartedAt.current = Date.now();
-  }, [estimating]);
-
-  useEffect(() => {
-    if (enriching) enrichStartedAt.current = Date.now();
-  }, [enriching]);
-
   useEffect(() => {
     if (!caseId) return;
     let cancelled = false;
@@ -54,37 +40,14 @@ export default function DealRoom() {
         if (cancelled) return;
         setOpportunity(opp);
         setClaims(c);
-        const [f, snap] = await Promise.all([
-          api.founders.get(opp.founder_id),
-          api.founders.score(opp.founder_id).catch(() => null as BackendScoreSnapshot | null),
-        ]);
+        const f = await api.founders.get(opp.founder_id);
         if (cancelled) return;
         if (f) setFounder(f);
-        // snap is used below for cold-start check — no state needed since
-        // the legacy Evidence Engine display was removed.
         try {
           const profile = await api.founders.screeningProfile(opp.founder_id);
           if (!cancelled) setScreeningProfile(profile);
         } catch {
           if (!cancelled) setScreeningProfile(null);
-        }
-
-        const isColdStart = !snap || snap.overall_confidence <= 0;
-        if (
-          isColdStart &&
-          f &&
-          f.enrichment_policy === "AUTO" &&
-          estimateTriggeredRef.current !== f.id
-        ) {
-          estimateTriggeredRef.current = f.id;
-          try {
-            await api.founders.enrich(f.id);
-            if (!cancelled) {
-              setEnriching(true);
-            }
-          } catch {
-            // ignore
-          }
         }
       } catch (err) {
         if (!cancelled) setError((err as ApiError).message || "Case not found");
@@ -102,51 +65,19 @@ export default function DealRoom() {
     api.opportunities.diligence(caseId).then(setClaims).catch(() => {});
   }, caseId ? 10000 : 0);
 
-  useAdaptivePolling(async () => {
-    if (!estimating || !founder || !caseId) return;
-    if (Date.now() - estimateStartedAt.current > 60000) {
-      setEstimating(false);
-      return;
-    }
-    try {
-      const snap = await api.founders.score(founder.id);
-      if (snap.overall_confidence > 0) {
-        setEstimating(false);
-        invalidateCache(`/v1/opportunities/${caseId}`);
-        try {
-          const opp = await api.opportunities.get(caseId);
-          setOpportunity(opp);
-        } catch {
-          // ignore
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }, estimating ? 3000 : 0);
-
-  useAdaptivePolling(async () => {
-    if (!enriching || !founder || !caseId) return;
-    if (Date.now() - enrichStartedAt.current > 90000) {
-      setEnriching(false);
-      return;
-    }
-    try {
-      const snap = await api.founders.score(founder.id);
-      if (snap.overall_confidence >= 0.3) {
-        setEnriching(false);
-        invalidateCache(`/v1/opportunities/${caseId}`);
-        try {
-          const opp = await api.opportunities.get(caseId);
-          setOpportunity(opp);
-        } catch {
-          // ignore
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }, enriching ? 3000 : 0);
+  const refreshAfterAI = async () => {
+    if (!caseId || !founder) return;
+    invalidateCache(`/v1/opportunities/${caseId}`);
+    invalidateCache(`/v1/opportunities/${caseId}/diligence`);
+    invalidateCache(`/v1/founders/${founder.id}`);
+    invalidateCache(`/v1/founders/${founder.id}/screening-profile`);
+    const [opp, updated, c] = await Promise.all([
+      api.opportunities.get(caseId), api.founders.get(founder.id), api.opportunities.diligence(caseId),
+    ]);
+    setOpportunity(opp);
+    setFounder(updated);
+    setClaims(c);
+  };
 
   if (loading && !opportunity) {
     return (
@@ -177,8 +108,7 @@ export default function DealRoom() {
       claims={claims}
       uploading={uploading}
       setUploading={setUploading}
-      enriching={enriching}
-      estimating={estimating}
+      onAIComplete={refreshAfterAI}
     />
   );
 }
@@ -249,8 +179,7 @@ function LiveOpportunityView({
   claims,
   uploading,
   setUploading,
-  estimating,
-  enriching,
+  onAIComplete,
   onStatusUpdated,
 }: {
   opportunity: BackendOpportunity;
@@ -259,10 +188,10 @@ function LiveOpportunityView({
   claims: BackendClaim[];
   uploading: boolean;
   setUploading: (v: boolean) => void;
-  estimating: boolean;
-  enriching: boolean;
+  onAIComplete: () => Promise<void>;
   onStatusUpdated?: (opp: BackendOpportunity) => void;
 }) {
+  const [uploadMessage, setUploadMessage] = useState("");
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -270,9 +199,11 @@ function LiveOpportunityView({
     if (!file) return;
     setUploading(true);
     setUploadError(null);
+    setUploadMessage("");
     try {
       await api.opportunities.uploadDeck(opportunity.opportunity_id, file, founder?.id);
-      alert("Deck uploaded. Extraction is running in the background.");
+      setUploadMessage("Deck text saved. AI has not run.");
+      await onAIComplete();
     } catch (err) {
       setUploadError((err as ApiError).message || "Upload failed");
     } finally {
@@ -288,6 +219,11 @@ function LiveOpportunityView({
         </Link>
       </div>
 
+      <ManualModeIndicator />
+      {founder && <div className="flex flex-wrap gap-3">
+        <ManualAIAction key={`estimate-${founder.id}`} label="Run AI estimate" run={() => api.founders.estimate(founder.id)} onComplete={onAIComplete} />
+        <ManualAIAction key={`enrich-${founder.id}`} label="Run AI enrichment (social → web → estimate)" run={() => api.founders.enrich(founder.id)} onComplete={onAIComplete} />
+      </div>}
       {/* Compact header */}
       <div className="panel space-y-3 border-manila-dark/30 bg-manila/20">
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -296,16 +232,6 @@ function LiveOpportunityView({
               <h1 className="text-2xl font-bold text-ink">
                 {screeningProfile?.project_name || founder?.current_company || founder?.name || "Untitled"}
               </h1>
-              {enriching && (
-                <span className="inline-flex items-center gap-1 rounded-sm border border-action/30 bg-action/10 px-1.5 py-0.5 text-[10px] font-mono font-medium text-action">
-                  <Loader2 size={10} className="animate-spin" /> Enriching
-                </span>
-              )}
-              {estimating && (
-                <span className="inline-flex items-center gap-1 rounded-sm border border-action/30 bg-action/10 px-1.5 py-0.5 text-[10px] font-mono font-medium text-action">
-                  <Loader2 size={10} className="animate-spin" /> Estimating
-                </span>
-              )}
             </div>
             <p className="text-sm text-concrete">
               {founder?.name ?? opportunity.founder_id}
@@ -409,7 +335,7 @@ function LiveOpportunityView({
             className={`flex cursor-pointer items-center gap-2 rounded-sm bg-action px-4 py-2 text-sm font-sans font-medium text-paper hover:bg-action-dark ${uploading ? "opacity-50" : ""}`}
           >
             {uploading ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
-            {uploading ? "Uploading…" : "Upload deck"}
+            {uploading ? "Uploading…" : "Save deck text"}
             <input
               type="file"
               className="hidden"
@@ -419,13 +345,15 @@ function LiveOpportunityView({
             />
           </label>
         </div>
+        {uploadMessage && <p role="status" className="text-sm text-concrete">{uploadMessage}</p>}
+        <ManualDeckExtraction key={opportunity.opportunity_id} opportunityId={opportunity.opportunity_id} founderId={founder?.id} onComplete={onAIComplete} />
         {uploadError && (
           <div className="rounded-sm border border-contradiction/30 bg-contradiction/10 p-3 text-sm text-contradiction">
             <AlertTriangle size={16} className="inline" /> {uploadError}
           </div>
         )}
         {claims.length === 0 ? (
-          <div className="text-sm text-concrete">No claims extracted yet. Upload a deck to create claims.</div>
+          <div className="text-sm text-concrete">No claims saved yet. Save deck text or run AI deck extraction.</div>
         ) : (
           <div className="space-y-2">
             {claims.map((claim) => (

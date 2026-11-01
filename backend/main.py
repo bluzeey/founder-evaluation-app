@@ -70,6 +70,8 @@ from tasks.founder_pool import (
 from tasks.document_extraction import extract_document
 from tasks.estimation_task import run_estimate
 from tasks.enrichment_task import enrich_founder_chain
+from ai_policy import queue_manual_task, require_manual_ai
+from owner_auth import install_owner_auth
 
 app = FastAPI(title="FounderOS API", version="0.1.0")
 
@@ -121,6 +123,9 @@ class CacheHeadersMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(CacheHeadersMiddleware)
 
+# Outermost guard protects existing and future routes, including manual AI.
+install_owner_auth(app)
+
 
 class CreateFounderRequest(BaseModel):
     name: str
@@ -130,8 +135,8 @@ class CreateFounderRequest(BaseModel):
     location: Optional[str] = None
     linkedin_url: Optional[str] = None
     github_url: Optional[str] = None
-    auto_score: bool = True
-    enrichment_policy: EnrichmentPolicy = EnrichmentPolicy.AUTO
+    auto_score: bool = False
+    enrichment_policy: EnrichmentPolicy = EnrichmentPolicy.MANUAL
 
 
 class CreateThesisRequest(BaseModel):
@@ -193,7 +198,7 @@ class ResearchFounderRequest(BaseModel):
 
 class CreateSourcingScheduleRequest(BaseModel):
     thesis_id: str
-    enabled: bool = True
+    enabled: bool = False
     interval_seconds: int = 300
     max_leads_per_run: int = 10
     sources: List[SourceConfig] = []
@@ -230,39 +235,12 @@ def create_founder(req: CreateFounderRequest, db: Session = Depends(get_db)):
         location=req.location,
         linkedin_url=req.linkedin_url,
         github_url=req.github_url,
-        enrichment_policy=req.enrichment_policy,
+        enrichment_policy=EnrichmentPolicy.MANUAL,
     )
     crud.create_founder(db, founder)
 
-    task = None
-    background_id = None
-    if req.enrichment_policy == EnrichmentPolicy.AUTO:
-        background_id = f"soc_{uuid.uuid4().hex[:8]}"
-        founder.social_background_id = background_id
-        crud.update_founder(db, founder_id, {"social_background_id": background_id})
-        pending = SocialMediaBackground(
-            id=background_id,
-            founder_id=founder_id,
-            status="pending",
-            linkedin_url=req.linkedin_url,
-            github_url=req.github_url,
-        )
-        store_social_background(pending)
-        task = research_social_background.delay(
-            founder_id=founder_id,
-            name=req.name,
-            email=req.email,
-            linkedin_url=req.linkedin_url,
-            github_url=req.github_url,
-            auto_score=req.auto_score,
-        )
-    logger.info(
-        "endpoint.create_founder.end founder_id=%s background_id=%s task_id=%s enrichment_policy=%s",
-        founder_id,
-        background_id,
-        task.id if task else None,
-        req.enrichment_policy.value,
-    )
+    # Legacy auto_score/AUTO inputs remain accepted, but saving never runs AI.
+    logger.info("endpoint.create_founder.end founder_id=%s ai_mode=manual", founder_id)
     return crud.founder_to_pydantic(db, crud.get_founder(db, founder_id))
 
 
@@ -560,7 +538,7 @@ def list_founder_pool(
     return [crud.pool_item_to_pydantic(item) for item in db_items]
 
 
-@app.post("/v1/founders/pool/refresh")
+@app.post("/v1/founders/pool/refresh", dependencies=[Depends(require_manual_ai)])
 def refresh_founder_pool_endpoint(thesis_id: Optional[str] = None, db: Session = Depends(get_db)):
     """Manually trigger the AI sourcing agent to discover new founders."""
     logger.info("endpoint.refresh_founder_pool.start thesis_id=%s", thesis_id)
@@ -579,7 +557,7 @@ def refresh_founder_pool_endpoint(thesis_id: Optional[str] = None, db: Session =
         if db_schedule:
             sources = [s.model_dump(mode="json") for s in crud.sourcing_schedule_to_pydantic(db_schedule).sources]
 
-    task = refresh_pool_task.delay(
+    task = queue_manual_task(refresh_pool_task, "source", thesis_id or "pool",
         sectors=thesis.sectors if thesis else None,
         stages=thesis.stages if thesis else None,
         geographies=thesis.geographies if thesis else None,
@@ -658,7 +636,7 @@ def dismiss_pool_item(item_id: str, db: Session = Depends(get_db)):
     return {"id": item_id, "status": PoolItemStatus.DISMISSED.value}
 
 
-@app.post("/v1/founders/research", response_model=Founder)
+@app.post("/v1/founders/research", dependencies=[Depends(require_manual_ai)], response_model=Founder)
 def research_founder(req: ResearchFounderRequest, db: Session = Depends(get_db)):
     """Research a founder with Tavily-backed web search + OpenAI and create a scored profile."""
     logger.info("endpoint.research_founder.start query=%s channels=%s", req.query, req.channels)
@@ -680,6 +658,7 @@ def research_founder(req: ResearchFounderRequest, db: Session = Depends(get_db))
     evidence_data = result.get("evidence", [])
 
     founder = create_founder_from_research(profile, summary, sources)
+    founder.enrichment_policy = EnrichmentPolicy.MANUAL
     crud.create_founder(db, founder)
 
     evidence_items = [evidence_from_llm(founder.id, item) for item in evidence_data]
@@ -710,7 +689,7 @@ def get_founder(founder_id: str, db: Session = Depends(get_db)):
     return crud.founder_to_pydantic(db, db_founder)
 
 
-@app.post("/v1/founders/{founder_id}/research-social")
+@app.post("/v1/founders/{founder_id}/research-social", dependencies=[Depends(require_manual_ai)])
 def research_social(founder_id: str, db: Session = Depends(get_db)):
     """Manually re-run social background research for a founder."""
     logger.info("endpoint.research_social.start founder_id=%s", founder_id)
@@ -730,7 +709,7 @@ def research_social(founder_id: str, db: Session = Depends(get_db)):
         github_url=founder.github_url,
     )
     store_social_background(pending)
-    task = research_social_background.delay(
+    task = queue_manual_task(research_social_background, "social", founder_id,
         founder_id=founder_id,
         name=founder.name,
         email=founder.email,
@@ -828,7 +807,7 @@ def get_score(founder_id: str, db: Session = Depends(get_db)):
     return crud.score_snapshot_to_pydantic(db_snapshot)
 
 
-@app.post("/v1/founders/{founder_id}/estimate")
+@app.post("/v1/founders/{founder_id}/estimate", dependencies=[Depends(require_manual_ai)])
 def estimate_founder(founder_id: str, db: Session = Depends(get_db)):
     """Queue an AI estimation pass that derives evidence from claims + research summaries.
 
@@ -842,7 +821,7 @@ def estimate_founder(founder_id: str, db: Session = Depends(get_db)):
         logger.warning("endpoint.estimate_founder.not_found founder_id=%s", founder_id)
         raise HTTPException(status_code=404, detail="Founder not found")
 
-    task = run_estimate.delay(founder_id)
+    task = queue_manual_task(run_estimate, "estimate", founder_id, founder_id=founder_id)
     logger.info(
         "endpoint.estimate_founder.queued founder_id=%s task_id=%s",
         founder_id,
@@ -851,7 +830,7 @@ def estimate_founder(founder_id: str, db: Session = Depends(get_db)):
     return {"task_id": task.id, "status": "queued"}
 
 
-@app.post("/v1/founders/{founder_id}/enrich")
+@app.post("/v1/founders/{founder_id}/enrich", dependencies=[Depends(require_manual_ai)])
 def enrich_founder(founder_id: str, db: Session = Depends(get_db)):
     """Queue the full 3-stage enrichment pipeline (social → deep web → estimate).
 
@@ -864,8 +843,7 @@ def enrich_founder(founder_id: str, db: Session = Depends(get_db)):
         logger.warning("endpoint.enrich_founder.not_found founder_id=%s", founder_id)
         raise HTTPException(status_code=404, detail="Founder not found")
 
-    crud.mark_founder_enriched(db, founder_id)
-    task = enrich_founder_chain.delay(founder_id)
+    task = queue_manual_task(enrich_founder_chain, "enrich", founder_id, founder_id=founder_id)
     logger.info(
         "endpoint.enrich_founder.queued founder_id=%s task_id=%s",
         founder_id,
@@ -895,8 +873,6 @@ def enrichment_status(db: Session = Depends(get_db)):
     """Queue health for the enrichment pipeline: how many founders are below
     the confidence threshold and the most recent dispatch time.
     """
-    import redis as _redis
-
     threshold = float(os.environ.get("ENRICHMENT_CONFIDENCE_THRESHOLD", "0.30"))
     below = crud.list_founders_below_confidence(
         db,
@@ -904,16 +880,6 @@ def enrichment_status(db: Session = Depends(get_db)):
         max_results=10000,
         min_gap_seconds=0,
     )
-    last_dispatch_at = None
-    try:
-        client = _redis.from_url(
-            os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/0"),
-            decode_responses=True,
-        )
-        last_dispatch_at = client.get("enrichment:last_dispatch_at")
-    except Exception as exc:
-        logger.warning("endpoint.enrichment_status.redis_failed error=%s", exc)
-
     recent = crud.list_enrichment_runs(db, limit=10)
     logger.info(
         "endpoint.enrichment_status below_threshold=%s recent=%s",
@@ -923,7 +889,9 @@ def enrichment_status(db: Session = Depends(get_db)):
     return {
         "below_threshold_count": len(below),
         "confidence_threshold": threshold,
-        "last_dispatch_at": last_dispatch_at,
+        "last_dispatch_at": None,
+        "ai_mode": "manual",
+        "scheduler_enabled": False,
         "recent_runs": [crud.enrichment_run_to_pydantic(r).model_dump(mode="json") for r in recent],
     }
 
@@ -997,6 +965,7 @@ def update_thesis(
         raise HTTPException(status_code=404, detail="Thesis not found")
 
     updates = req.model_dump(exclude_unset=True)
+    updates["enabled"] = False
     if not updates:
         return crud.thesis_to_pydantic(db_thesis)
 
@@ -1281,31 +1250,6 @@ def get_diligence(opportunity_id: str, db: Session = Depends(get_db)):
     logger.info("endpoint.get_diligence.start opportunity_id=%s", opportunity_id)
     claims = crud.list_claims_for_opportunity(db, opportunity_id)
 
-    # Resolve the founder for this opportunity so claims (and any estimation
-    # trigger) can be attributed correctly.
-    db_opp = crud.get_opportunity(db, opportunity_id)
-    founder_id = db_opp.founder_id if db_opp else None
-
-    # If the founder is still at cold-start, queue an AI estimate so the
-    # score breakdown populates from the claims + source signal. Non-blocking.
-    if founder_id:
-        db_founder = crud.get_founder(db, founder_id)
-        if db_founder:
-            snapshot = (
-                crud.score_snapshot_to_pydantic(snap)
-                if db_founder.latest_score_snapshot_id
-                and (snap := crud.get_score_snapshot(db, db_founder.latest_score_snapshot_id))
-                else None
-            )
-            cold_start = (snapshot is None) or (snapshot.overall_confidence <= 0.0)
-            if cold_start and db_founder.enrichment_policy == EnrichmentPolicy.AUTO.value:
-                task = run_estimate.delay(founder_id)
-                logger.info(
-                    "endpoint.get_diligence.cold_start_estimate_queued founder_id=%s task_id=%s",
-                    founder_id,
-                    task.id,
-                )
-
     logger.info(
         "endpoint.get_diligence.end opportunity_id=%s claim_count=%s",
         opportunity_id,
@@ -1338,8 +1282,7 @@ def seed_demo(db: Session = Depends(get_db)):
         db,
     )
 
-    # Create a default recurring sourcing schedule for the thesis so the agent keeps collecting leads.
-    # Runs every hour with LinkedIn and Twitter keyword searches based on the thesis.
+    # Save keyword settings for explicit manual sourcing runs. Scheduling stays off.
     schedule_id = f"sch_{uuid.uuid4().hex[:8]}"
     now = datetime.now(timezone.utc)
     default_sources = [
@@ -1440,31 +1383,12 @@ def seed_all(db: Session = Depends(get_db)):
                 location=founder_data["location"],
                 linkedin_url=founder_data.get("linkedin_url"),
                 github_url=founder_data.get("github_url"),
+                enrichment_policy=EnrichmentPolicy.MANUAL,
             )
             crud.create_founder(db, founder)
             created_founders.append(founder.id)
             logger.info("endpoint.seed_all.created_founder founder_id=%s", founder.id)
 
-            # Trigger social background research automatically (matches create_founder behavior).
-            background_id = f"soc_{uuid.uuid4().hex[:8]}"
-            crud.update_founder(db, founder.id, {"social_background_id": background_id})
-            from tasks.social_research import store_social_background, research_social_background
-            pending = SocialMediaBackground(
-                id=background_id,
-                founder_id=founder.id,
-                status="pending",
-                linkedin_url=founder.linkedin_url,
-                github_url=founder.github_url,
-            )
-            store_social_background(pending)
-            research_social_background.delay(
-                founder_id=founder.id,
-                name=founder.name,
-                email=founder.email,
-                linkedin_url=founder.linkedin_url,
-                github_url=founder.github_url,
-                auto_score=True,
-            )
         else:
             logger.info("endpoint.seed_all.founder_exists founder_id=%s", founder_data["id"])
 
@@ -1579,10 +1503,58 @@ def upload_deck(
     founder_id: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """Upload a deck (PDF/DOCX/TXT/MD), extract claims and evidence via AI, and discard the file.
+    """Save locally parsed document text as claims. No AI or queued work."""
+    logger.info(
+        "endpoint.upload_deck.start opportunity_id=%s founder_id=%s filename=%s content_type=%s",
+        opportunity_id,
+        founder_id,
+        file.filename,
+        file.content_type,
+    )
 
-    The file itself is not stored; only the structured extraction is persisted.
-    """
+    db_opp = crud.get_opportunity(db, opportunity_id)
+    if not db_opp:
+        logger.warning("endpoint.upload_deck.opportunity_not_found opportunity_id=%s", opportunity_id)
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+
+    if founder_id:
+        db_founder = crud.get_founder(db, founder_id)
+        if not db_founder:
+            logger.warning("endpoint.upload_deck.founder_not_found founder_id=%s", founder_id)
+            raise HTTPException(status_code=404, detail="Founder not found")
+
+    file_bytes = file.file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    from document_extractor import extract_text
+    from models import TrustStatus
+
+    text = extract_text(file_bytes, file.filename or "document")
+    if text is None:
+        raise HTTPException(status_code=400, detail="Supported files: PDF, DOCX, TXT, MD")
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="No readable text in file")
+    # Preserve the complete parsed text as founder-reported claims without AI.
+    claims = [Claim(
+        id=f"clm_{uuid.uuid4().hex[:8]}", opportunity_id=opportunity_id,
+        founder_id=founder_id or db_opp.founder_id,
+        claim=text[offset:offset + 8000], source=file.filename or "document",
+        trust_status=TrustStatus.FOUNDER_REPORTED, confidence=0.0,
+    ) for offset in range(0, len(text), 8000)]
+    crud.create_claims(db, claims)
+    return {"opportunity_id": opportunity_id, "founder_id": founder_id or db_opp.founder_id,
+            "task_id": None, "status": "saved", "claims_count": len(claims), "ai_mode": "manual"}
+
+
+@app.post("/v1/opportunities/{opportunity_id}/deck/extract", dependencies=[Depends(require_manual_ai)])
+def extract_deck_manually(
+    opportunity_id: str,
+    file: UploadFile = File(...),
+    founder_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Explicitly request document extraction only; never chain estimation."""
     logger.info(
         "endpoint.upload_deck.start opportunity_id=%s founder_id=%s filename=%s content_type=%s",
         opportunity_id,
@@ -1608,8 +1580,8 @@ def upload_deck(
 
     import base64
 
-    task = extract_document.delay(
-        base64.b64encode(file_bytes).decode("utf-8"),
+    task = queue_manual_task(extract_document, "document", opportunity_id,
+        file_bytes_b64=base64.b64encode(file_bytes).decode("utf-8"),
         filename=file.filename or "document",
         opportunity_id=opportunity_id,
         founder_id=founder_id,
@@ -1651,7 +1623,7 @@ def create_sourcing_schedule(
     schedule = SourcingSchedule(
         id=schedule_id,
         thesis_id=req.thesis_id,
-        enabled=req.enabled,
+        enabled=False,
         interval_seconds=req.interval_seconds,
         max_leads_per_run=req.max_leads_per_run,
         sources=req.sources,
@@ -1686,6 +1658,7 @@ def update_sourcing_schedule(
         raise HTTPException(status_code=404, detail="Sourcing schedule not found")
 
     updates = req.model_dump(exclude_unset=True)
+    updates["enabled"] = False
     if not updates:
         return crud.sourcing_schedule_to_pydantic(db_schedule)
 
@@ -1703,16 +1676,17 @@ def delete_sourcing_schedule(schedule_id: str, db: Session = Depends(get_db)):
     return {"id": schedule_id, "deleted": True}
 
 
-@app.post("/v1/theses/{thesis_id}/source-now")
+@app.post("/v1/theses/{thesis_id}/source-now", dependencies=[Depends(require_manual_ai)])
 def source_now(thesis_id: str, db: Session = Depends(get_db)):
     """Manually trigger a sourcing job for a thesis."""
     db_thesis = crud.get_thesis(db, thesis_id)
     if not db_thesis:
         raise HTTPException(status_code=404, detail="Thesis not found")
 
-    job_id = run_sourcing_job(thesis_id)
+    job = run_sourcing_job(thesis_id)
+    job_id = job["job_id"]
     logger.info("endpoint.source_now thesis_id=%s job_id=%s", thesis_id, job_id)
-    return {"thesis_id": thesis_id, "job_id": job_id, "status": "queued"}
+    return {"thesis_id": thesis_id, **job, "status": "queued"}
 
 
 @app.get("/v1/sourcing/jobs", response_model=List[SourcingJob])
@@ -1724,17 +1698,6 @@ def list_sourcing_jobs(
     db_jobs = crud.list_sourcing_jobs(db, thesis_id=thesis_id, status=status)
     logger.info("endpoint.list_sourcing_jobs count=%s", len(db_jobs))
     return [crud.sourcing_job_to_pydantic(j) for j in db_jobs]
-
-
-def _last_dispatch_time() -> Optional[str]:
-    import redis
-
-    redis_url = os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
-    try:
-        client = redis.from_url(redis_url, decode_responses=True)
-        return client.get("sourcing:last_dispatch_at")
-    except Exception:
-        return None
 
 
 @app.get("/v1/sourcing/status")
@@ -1752,7 +1715,7 @@ def get_sourcing_status(db: Session = Depends(get_db)):
         crud.sourcing_job_to_pydantic(j)
         for j in crud.list_sourcing_jobs(db, limit=10)
     ]
-    last_dispatch = _last_dispatch_time()
+    last_dispatch = None
 
     logger.info(
         "endpoint.get_sourcing_status schedules=%s active_jobs=%s recent_jobs=%s last_dispatch=%s",
@@ -1765,8 +1728,16 @@ def get_sourcing_status(db: Session = Depends(get_db)):
         "schedules": [s.model_dump(mode="json") for s in schedules],
         "active_jobs": [j.model_dump(mode="json") for j in active_jobs],
         "recent_jobs": [j.model_dump(mode="json") for j in recent_jobs],
-        "last_dispatch_at": last_dispatch,
+        "last_dispatch_at": None,
+        "ai_mode": "manual",
+        "scheduler_enabled": False,
     }
+
+
+@app.get("/v1/ai/tasks/{task_id}", dependencies=[Depends(require_manual_ai)])
+def manual_ai_task_status(task_id: str):
+    from ai_policy import task_status
+    return task_status(task_id)
 
 
 if __name__ == "__main__":

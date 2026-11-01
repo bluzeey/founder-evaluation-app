@@ -4,11 +4,11 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from celery_app import app
+from ai_policy import manual_allowed, skipped_manual_required
 from database import SessionLocal
 import crud
 from document_extractor import extract_text
 from models import Claim, EvidenceItem, Founder, SourcingJob, TrustStatus
-from estimation import estimate_founder_scores
 from research import DocumentAgent
 from research.extractor import create_founder_from_research, evidence_from_llm
 from tasks.retry_utils import (
@@ -39,6 +39,7 @@ def extract_document(
     filename: str,
     opportunity_id: str,
     founder_id: Optional[str] = None,
+    manual_intent: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Celery task that extracts claims and evidence from an uploaded document.
 
@@ -46,6 +47,8 @@ def extract_document(
     raw bytes. The file itself is not persisted; only the extracted structured data
     is stored in the database.
     """
+    if not manual_allowed(manual_intent, ("document",), opportunity_id, self.request.id):
+        return skipped_manual_required(opportunity_id=opportunity_id)
     import base64
 
     db = SessionLocal()
@@ -121,15 +124,6 @@ def extract_document(
                 db_opp.founder_score = snapshot.founder_score
                 db_opp.founder_confidence = snapshot.overall_confidence
             db.commit()
-
-        # Always fill remaining unknown/low-confidence dimensions with AI estimates
-        # when we have a founder. This covers the common case where the LLM
-        # returned claims but no direct evidence array, as well as dimensions
-        # that the direct evidence did not cover. estimate_founder_scores gates
-        # internally on evidence count + confidence, so this is safe to call
-        # even when evidence_items was non-empty above.
-        if founder_id:
-            estimate_founder_scores(founder_id, db=db)
 
         # Optionally update founder profile if founder_id is provided.
         if founder_id:

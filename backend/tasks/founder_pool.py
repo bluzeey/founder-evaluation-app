@@ -1,12 +1,13 @@
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import redis
 
 from celery_app import app
+from ai_policy import manual_allowed, skipped_manual_required, queue_manual_task
 from database import SessionLocal
 import crud
 import db_models
@@ -16,15 +17,13 @@ from models import (
     FounderPoolItem,
     OpportunityScreen,
     PoolItemStatus,
-    SocialMediaBackground,
+    EnrichmentPolicy,
     SourcingJob,
     TeamCompleteness,
 )
 from research import SourcingAgent
 from scoring import calculate_founder_score
-from estimation import estimate_founder_scores
 from tasks.retry_utils import SOURCING_MAX_RETRIES, SOURCING_RETRY_BASE_DELAY, maybe_retry
-from tasks.social_research import research_social_background, store_social_background
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +166,7 @@ def create_founder_and_opportunity_from_pool_item(
         location=item.location,
         linkedin_url=item.linkedin_url,
         github_url=item.github_url,
+        enrichment_policy=EnrichmentPolicy.MANUAL,
         source_reason=item.reason,
         source_url=item.source_url,
     )
@@ -194,27 +194,6 @@ def create_founder_and_opportunity_from_pool_item(
     )
     crud.create_or_update_opportunity(db, opp)
 
-    # Auto-trigger social background research when links are available.
-    if item.linkedin_url or item.github_url:
-        background_id = f"soc_{uuid.uuid4().hex[:8]}"
-        crud.update_founder(db, founder_id, {"social_background_id": background_id})
-        pending = SocialMediaBackground(
-            id=background_id,
-            founder_id=founder_id,
-            status="pending",
-            linkedin_url=item.linkedin_url,
-            github_url=item.github_url,
-        )
-        store_social_background(pending)
-        research_social_background.delay(
-            founder_id=founder_id,
-            name=founder.name,
-            email=founder.email,
-            linkedin_url=item.linkedin_url,
-            github_url=item.github_url,
-            auto_score=True,
-        )
-
     return crud.founder_to_pydantic(db, crud.get_founder(db, founder_id)), opportunity_id
 
 
@@ -226,12 +205,16 @@ def refresh_founder_pool(
     sources: Optional[List[dict[str, str]]] = None,
     thesis_id: Optional[str] = None,
     job_id: Optional[str] = None,
+    manual_intent: Optional[str] = None,
+    manual_task_id: Optional[str] = None,
 ) -> List[FounderPoolItem]:
     """Run the sourcing agent and append new recommendations to the database pool.
 
     Existing recommended items are replaced; approved/dismissed items are preserved.
     Duplicate candidates are skipped against both the pool and existing founders.
     """
+    if not manual_allowed(manual_intent, ("source",), thesis_id or "pool", manual_task_id):
+        return skipped_manual_required()
     sectors = sectors or ["B2B SaaS", "AI Infrastructure"]
     stages = stages or ["pre-seed", "seed"]
     geographies = US_ONLY_SOURCING_GEOGRAPHIES.copy()
@@ -345,11 +328,8 @@ def refresh_founder_pool(
             crud.create_pool_items(db, new_items)
 
             # Every sourced lead becomes a founder case with a cold-start score.
-            # Social background research is queued automatically when links exist.
             for item in new_items:
-                founder, _ = create_founder_and_opportunity_from_pool_item(db, item)
-                # Estimate dimension scores from the source signal and any available context.
-                estimate_founder_scores(founder.id, db=db)
+                create_founder_and_opportunity_from_pool_item(db, item)
 
             db.commit()
 
@@ -400,7 +380,7 @@ def refresh_founder_pool(
         db.close()
 
 
-def run_sourcing_job(thesis_id: str) -> str:
+def run_sourcing_job(thesis_id: str) -> Dict[str, str]:
     """Create a sourcing job record and dispatch the Celery task."""
     db = SessionLocal()
     try:
@@ -409,7 +389,7 @@ def run_sourcing_job(thesis_id: str) -> str:
             raise ValueError(f"Thesis not found: {thesis_id}")
         thesis = crud.thesis_to_pydantic(db_thesis)
 
-        # Prefer the active schedule for this thesis to get sources and interval context.
+        # Reuse saved source settings, regardless of the legacy enabled flag.
         db_schedule = crud.get_sourcing_schedule_by_thesis(db, thesis_id)
         schedule = crud.sourcing_schedule_to_pydantic(db_schedule) if db_schedule else None
 
@@ -423,108 +403,31 @@ def run_sourcing_job(thesis_id: str) -> str:
         )
         crud.create_sourcing_job(db, job)
 
-        refresh_pool_task.delay(
-            sectors=thesis.sectors,
-            stages=thesis.stages,
-            geographies=thesis.geographies,
-            risk_appetite=thesis.risk_appetite,
-            sources=[s.model_dump(mode="json") for s in schedule.sources] if schedule and schedule.sources else None,
-            thesis_id=thesis_id,
-            job_id=job_id,
-        )
-        return job_id
+        try:
+            task = queue_manual_task(refresh_pool_task, "source", thesis_id,
+                sectors=thesis.sectors,
+                stages=thesis.stages,
+                geographies=thesis.geographies,
+                risk_appetite=thesis.risk_appetite,
+                sources=[s.model_dump(mode="json") for s in schedule.sources] if schedule and schedule.sources else None,
+                thesis_id=thesis_id,
+                job_id=job_id,
+            )
+        except Exception:
+            crud.update_sourcing_job(db, job_id, {
+                "status": "failed", "error_message": "Could not queue manual sourcing",
+                "ended_at": datetime.now(timezone.utc),
+            })
+            raise
+        return {"job_id": job_id, "task_id": task.id}
     finally:
         db.close()
 
 
 @app.task(bind=True, max_retries=2, default_retry_delay=30)
 def dispatch_sourcing_jobs(self) -> Dict[str, Any]:
-    """Celery beat task that dispatches sourcing jobs for due schedules.
-
-    Gated on enrichment: automatic sourcing is paused while any founder is
-    below the enrichment confidence threshold AND has not yet completed an
-    enrichment pass. Once every founder has been enriched once, sourcing
-    resumes. Manual sourcing endpoints (Refresh pool / Source now) are NOT
-    gated and remain available as explicit overrides.
-    """
-    now = datetime.now(timezone.utc)
-    logger.info("founder_pool.dispatch_sourcing_jobs.start now=%s", now)
-
-    db = SessionLocal()
-    dispatched = []
-    try:
-        # Enrichment gate: do not source new leads while existing founders are
-        # still awaiting their one enrichment pass. Founders that have already
-        # been enriched once (enrichment_attempts > 0) no longer block.
-        enrichment_threshold = float(
-            os.environ.get("ENRICHMENT_CONFIDENCE_THRESHOLD", "0.30")
-        )
-        blocking = crud.count_founders_blocking_sourcing(db, threshold=enrichment_threshold)
-        if blocking > 0:
-            logger.info(
-                "founder_pool.dispatch_sourcing_jobs.skip_enrichment_pending below_threshold_unenriched=%s",
-                blocking,
-            )
-            return {
-                "dispatched": [],
-                "skipped_reason": "enrichment_pending",
-                "below_threshold_unenriched": blocking,
-                "now": now.isoformat(),
-            }
-
-        due_schedules = crud.list_due_sourcing_schedules(db, now)
-        for db_schedule in due_schedules:
-            schedule = crud.sourcing_schedule_to_pydantic(db_schedule)
-
-            # Skip if a job for this schedule is already running.
-            running = (
-                db.query(db_models.SourcingJob)
-                .filter(
-                    db_models.SourcingJob.schedule_id == schedule.id,
-                    db_models.SourcingJob.status == "running",
-                )
-                .first()
-            )
-            if running:
-                logger.info(
-                    "founder_pool.dispatch_sourcing_jobs.skip_running schedule_id=%s",
-                    schedule.id,
-                )
-                continue
-
-            job_id = run_sourcing_job(schedule.thesis_id)
-            next_run = now + timedelta(seconds=schedule.interval_seconds)
-            crud.update_sourcing_schedule(
-                db,
-                schedule.id,
-                {
-                    "last_run_at": now,
-                    "next_run_at": next_run,
-                },
-            )
-            dispatched.append(
-                {
-                    "schedule_id": schedule.id,
-                    "thesis_id": schedule.thesis_id,
-                    "job_id": job_id,
-                    "next_run_at": next_run.isoformat(),
-                }
-            )
-
-        # Track the last successful dispatch time in Redis for health checks.
-        try:
-            client = _redis_client()
-            client.set("sourcing:last_dispatch_at", now.isoformat())
-        except Exception as exc:
-            logger.warning("founder_pool.dispatch_sourcing_jobs.redis_health_failed error=%s", exc)
-
-        logger.info(
-            "founder_pool.dispatch_sourcing_jobs.end dispatched=%s",
-            len(dispatched),
-        )
-        return {"dispatched": dispatched, "now": now.isoformat()}
-    finally:
-        db.close()
+    """Legacy queued dispatches are permanently inert, including replayed jobs."""
+    return {**skipped_manual_required(), "dispatched": []}
 
 
 @app.task(
@@ -542,8 +445,11 @@ def refresh_pool_task(
     sources: Optional[List[dict[str, str]]] = None,
     thesis_id: Optional[str] = None,
     job_id: Optional[str] = None,
+    manual_intent: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Celery task that refreshes the founder pool with AI-sourced recommendations."""
+    if not manual_allowed(manual_intent, ("source",), thesis_id or "pool", self.request.id):
+        return skipped_manual_required()
     logger.info("founder_pool.refresh_pool_task.start task_id=%s job_id=%s sources=%s", self.request.id, job_id, sources)
     try:
         pool = refresh_founder_pool(
@@ -554,10 +460,15 @@ def refresh_pool_task(
             sources=sources,
             thesis_id=thesis_id,
             job_id=job_id,
+            manual_intent=manual_intent,
+            manual_task_id=self.request.id,
         )
     except Exception as exc:
         logger.error("founder_pool.refresh_pool_task.error error=%s", exc)
         maybe_retry(self, exc)
+
+    if isinstance(pool, dict):
+        return pool
 
     return {
         "status": "completed",
