@@ -9,7 +9,7 @@ os.environ["DATABASE_URL"] = os.environ.get(
     "postgresql+psycopg2://postgres:founderos@localhost:5433/founderos_test",
 )
 os.environ["CELERY_ALWAYS_EAGER"] = "true"
-os.environ["OPENAI_API_KEY"] = "test-key"
+os.environ["OPENROUTER_API_KEY"] = "test-openrouter-key"
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -85,7 +85,7 @@ def owner_session(monkeypatch):
         "GOOGLE_CLIENT_ID": "pytest-client", "GOOGLE_CLIENT_SECRET": "pytest-secret",
         "REDIRECT_URI": "https://founder-os-dev.vercel.app/api/auth/google/callback",
         "FRONTEND_ORIGIN": "https://founder-os-dev.vercel.app",
-        "ALLOWED_EMAIL": "owner@example.test",
+        "WORKSPACE_MODE": "shared",  # Synthetic test data only; no deployment policy.
     }.items():
         monkeypatch.setenv("FOUNDEROS_" + name, value)
     raw, now = secrets.token_urlsafe(32), auth._now()

@@ -13,15 +13,24 @@ from typing import Optional
 
 import redis
 from fastapi import HTTPException, Request
+from research.openrouter_config import SETUP_PENDING, readiness
 
 GRANT_TTL_SECONDS = 1800
 STATUS_TTL_SECONDS = 86400
 
 
 async def require_manual_ai(request: Request):
-    """The parent's owner middleware sets this only after session validation."""
+    """The session middleware sets this only after Google session validation."""
     if not getattr(request.state, "owner_email", None):
-        raise HTTPException(401, "Sign in as the owner before running AI")
+        raise HTTPException(401, "Sign in with Google before running AI")
+    # Status/config reads remain available when setup is pending.
+    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        require_ai_ready()
+
+
+def require_ai_ready():
+    if not readiness()["enabled"]:
+        raise HTTPException(503, SETUP_PENDING)
 
 
 def _store():
@@ -36,6 +45,9 @@ def skipped_manual_required(**details):
 
 
 def manual_allowed(intent: Optional[str], workflows, target: str, task_id: Optional[str]) -> bool:
+    # Recheck in workers too: a previously issued grant cannot bypass setup.
+    if not readiness()["enabled"]:
+        return False
     if not isinstance(intent, str) or not intent or not task_id:
         return False
     try:
@@ -50,6 +62,7 @@ def manual_allowed(intent: Optional[str], workflows, target: str, task_id: Optio
 
 def queue_manual_task(task, workflow: str, target: str, **kwargs):
     """Called only by protected manual HTTP handlers, never by task dispatchers."""
+    require_ai_ready()
     intent = secrets.token_urlsafe(32)
     task_id = str(uuid.uuid4())
     grant = {"workflow": workflow, "target": target, "task_id": task_id,

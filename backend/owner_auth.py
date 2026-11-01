@@ -1,6 +1,7 @@
-"""Owner-only Google OIDC. Call install_owner_auth(app) LAST, before serving.
+"""Public Google OIDC. Call install_owner_auth(app, data_access_scope=None) LAST.
 
-Requires all five FOUNDEROS_* settings below and the auth Alembic migration.
+Requires four Google/origin settings, an explicit server workspace mode, and the
+auth Alembic migrations. Email is profile metadata, never a data ownership key.
 Cookies belong to the browser-facing HTTPS host; the /api rewrite removes /api
 before reaching this app. No redirect URL is derived from forwarding headers.
 No tables are created at runtime and no Google tokens are persisted.
@@ -13,6 +14,7 @@ import re
 import secrets
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from urllib.parse import urlencode, urlsplit
 
 import httpx
@@ -34,6 +36,7 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 _OPAQUE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+_AUTH_PATHS = frozenset({"/auth/login", "/auth/google/callback", "/auth/me", "/auth/logout"})
 
 # Deliberately separate from business metadata: only the additive revision owns
 # these tables. Future Alembic autogeneration must also include AUTH_METADATA.
@@ -41,10 +44,9 @@ AUTH_METADATA = sa.MetaData()
 owner = sa.Table(
     "owner_auth_identity", AUTH_METADATA,
     sa.Column("id", sa.Integer, primary_key=True),
-    sa.Column("email", sa.String(320), nullable=False, unique=True),
+    sa.Column("email", sa.String(320), nullable=False),
     sa.Column("google_sub", sa.String(255), nullable=False, unique=True),
     sa.Column("created_at", sa.BigInteger, nullable=False),
-    sa.CheckConstraint("id = 1", name="ck_owner_auth_single_owner"),
 )
 oauth_states = sa.Table(
     "owner_auth_states", AUTH_METADATA,
@@ -73,29 +75,36 @@ class _Denied(Exception):
     pass
 
 
+class WorkspaceMode(str, Enum):
+    SHARED = "shared"
+    PRIVATE = "private"
+
+
 @dataclass(frozen=True)
 class _Config:
     client_id: str
     client_secret: str = field(repr=False)
     redirect_uri: str
     frontend_origin: str
-    allowed_email: str
+    workspace_mode: WorkspaceMode
 
     @classmethod
     def read(cls):
         values = [os.environ.get("FOUNDEROS_" + name, "") for name in (
             "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "REDIRECT_URI",
-            "FRONTEND_ORIGIN", "ALLOWED_EMAIL",
+            "FRONTEND_ORIGIN", "WORKSPACE_MODE",
         )]
         if any(not value or value != value.strip() for value in values):
             raise _Unavailable()
-        values[-1] = values[-1].casefold()
+        try:
+            values[-1] = WorkspaceMode(values[-1])
+        except ValueError:
+            raise _Unavailable() from None
         config = cls(*values)
         origin = urlsplit(config.frontend_origin)
         if (origin.scheme != "https" or not origin.hostname or origin.username
                 or origin.password or origin.path or origin.query or origin.fragment
-                or config.redirect_uri != config.frontend_origin + "/api/auth/google/callback"
-                or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", config.allowed_email)):
+                or config.redirect_uri != config.frontend_origin + "/api/auth/google/callback"):
             raise _Unavailable()
         return config
 
@@ -172,14 +181,15 @@ def _verify_google(code, config, verifier, nonce):
                                 ]})
         if (claims.get("email_verified") is not True
                 or not isinstance(claims.get("email"), str)
-                or claims["email"].casefold() != config.allowed_email
+                or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", claims["email"])
+                or len(claims["email"].casefold()) > 320
                 or claims.get("azp", config.client_id) != config.client_id
                 or not isinstance(claims["nonce"], str)
                 or not secrets.compare_digest(claims["nonce"].encode(), nonce.encode())
                 or not isinstance(claims["sub"], str)
                 or not claims["sub"] or len(claims["sub"]) > 255):
             raise _Denied()
-        return claims["sub"]
+        return claims["sub"], claims["email"].casefold()
     except Exception:
         # Do not expose provider responses, authorization codes, or JWT claims.
         raise _Denied() from None
@@ -222,46 +232,57 @@ def _callback(request, config, params):
         ).returning(oauth_states)).mappings().first()
     if pending is None or params.getlist("error") or len(codes) != 1 or not codes[0] or len(codes[0]) > 4096:
         return _error(400)
-    google_sub = _verify_google(codes[0], config, pending["pkce_verifier"], pending["nonce"])
+    google_sub, email = _verify_google(codes[0], config, pending["pkce_verifier"], pending["nonce"])
     raw_session, now = secrets.token_urlsafe(32), _now()
     with _engine().begin() as connection:
-        identity = connection.execute(sa.select(owner).where(owner.c.id == 1)).mappings().first()
+        identity_query = sa.select(owner).where(owner.c.google_sub == google_sub)
+        identity = connection.execute(identity_query).mappings().first()
         if identity is None:
             try:
                 with connection.begin_nested():
                     connection.execute(owner.insert().values(
-                        id=1, email=config.allowed_email, google_sub=google_sub, created_at=now,
+                        email=email, google_sub=google_sub, created_at=now,
                     ))
             except IntegrityError:
-                pass  # A concurrent first login may have bound the singleton.
-            identity = connection.execute(sa.select(owner).where(owner.c.id == 1)).mappings().one()
-        if identity["email"] != config.allowed_email or identity["google_sub"] != google_sub:
-            raise _Denied()
+                # Only a competing insert of this exact immutable subject can
+                # resolve the race. An email match must never bind a principal.
+                if connection.execute(identity_query).mappings().first() is None:
+                    raise
+            identity = connection.execute(identity_query).mappings().one()
+        if identity["email"] != email:
+            connection.execute(owner.update().where(owner.c.id == identity["id"]).values(email=email))
         previous = request.cookies.get(SESSION_COOKIE)
         if _opaque(previous):
             connection.execute(sessions.update().where(sessions.c.session_hash == _hash(previous))
                                .values(revoked_at=now))
         connection.execute(sessions.delete().where(sessions.c.expires_at <= now))
         connection.execute(sessions.insert().values(
-            session_hash=_hash(raw_session), owner_id=1, created_at=now,
+            session_hash=_hash(raw_session), owner_id=identity["id"], created_at=now,
             expires_at=now + SESSION_TTL,
         ))
+    _set_principal(request, {"user_id": identity["id"], "email": email})
     response = RedirectResponse(config.frontend_origin + "/", status_code=302)
     _cookie(response, SESSION_COOKIE, raw_session, SESSION_TTL)
     return response
 
 
-def _session_email(request, config):
+def _session_principal(request):
     raw = request.cookies.get(SESSION_COOKIE)
     if not _opaque(raw):
         return None
     with _engine().connect() as connection:
         _schema_ready(connection)
-        return connection.execute(sa.select(owner.c.email).select_from(sessions.join(owner)).where(
+        return connection.execute(sa.select(owner.c.id.label("user_id"), owner.c.email)
+                                  .select_from(sessions.join(owner)).where(
             sessions.c.session_hash == _hash(raw), sessions.c.expires_at > _now(),
-            sessions.c.revoked_at.is_(None), owner.c.id == 1,
-            owner.c.email == config.allowed_email,
-        )).scalar_one_or_none()
+            sessions.c.revoked_at.is_(None),
+        )).mappings().one_or_none()
+
+
+def _set_principal(request, principal):
+    request.state.user_id = principal["user_id"]
+    request.state.email = principal["email"]
+    request.state.owner_email = principal["email"]  # Compatibility for manual guard.
 
 
 def _handle_auth(request, config, params):
@@ -271,11 +292,13 @@ def _handle_auth(request, config, params):
             return _login(request, config)
         if path == "/auth/google/callback":
             return _callback(request, config, params)
-        email = _session_email(request, config)
-        if email is None:
+        principal = _session_principal(request)
+        if principal is None:
             return _error(401)
+        _set_principal(request, principal)
         if path == "/auth/me":
-            return JSONResponse({"authenticated": True, "email": email})
+            return JSONResponse({"authenticated": True, **principal,
+                                 "workspace_mode": config.workspace_mode.value})
         with _engine().begin() as connection:
             connection.execute(sessions.update().where(
                 sessions.c.session_hash == _hash(request.cookies[SESSION_COOKIE]),
@@ -291,8 +314,9 @@ def _handle_auth(request, config, params):
 
 
 class _OwnerAuthMiddleware:
-    def __init__(self, app):
+    def __init__(self, app, data_access_scope=None):
         self.app = app
+        self.data_access_scope = data_access_scope
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "websocket":
@@ -339,19 +363,36 @@ class _OwnerAuthMiddleware:
             else:
                 config = _Config.read()
                 origins = request.headers.getlist("origin")
-                if method not in _SAFE_METHODS and origins != [config.frontend_origin]:
+                if (path not in _AUTH_PATHS and config.workspace_mode is WorkspaceMode.PRIVATE
+                        and not callable(self.data_access_scope)):
+                    response = _error(503)
+                elif method not in _SAFE_METHODS and origins != [config.frontend_origin]:
                     response = _error(403)
-                elif path in {"/auth/login", "/auth/google/callback", "/auth/me", "/auth/logout"}:
+                elif path in _AUTH_PATHS:
                     expected = "POST" if path == "/auth/logout" else "GET"
                     response = (_error(405) if method != expected else
                                 await run_in_threadpool(_handle_auth, request, config, params))
                 else:
-                    email = await run_in_threadpool(_session_email, request, config)
-                    if email is None:
+                    principal = await run_in_threadpool(_session_principal, request)
+                    if principal is None:
                         response = _error(401)
                     else:
-                        downstream_scope.setdefault("state", {})["owner_email"] = email
-                        await self.app(downstream_scope, receive, private_send)
+                        _set_principal(request, principal)
+                        downstream_scope["state"] = scope["state"]
+                        if config.workspace_mode is WorkspaceMode.PRIVATE:
+                            # Enter in this ASGI task: ContextVars then propagate
+                            # into downstream async handlers and threadpool jobs.
+                            # Always unwind, including exceptions/cancellation.
+                            try:
+                                context = self.data_access_scope(principal["user_id"])
+                                if not callable(getattr(context, "__enter__", None)) or not callable(getattr(context, "__exit__", None)):
+                                    raise _Unavailable()
+                            except Exception:
+                                raise _Unavailable() from None
+                            with context:
+                                await self.app(downstream_scope, receive, private_send)
+                        else:
+                            await self.app(downstream_scope, receive, private_send)
                         return
             await response(scope, receive, private_send)
         except (SQLAlchemyError, _Unavailable):
@@ -364,15 +405,26 @@ class _OwnerAuthMiddleware:
             await _error(500)(scope, receive, private_send)
 
 
-def install_owner_auth(app):
+def install_owner_auth(app, data_access_scope=None):
     """Install LAST so this guard overrides CORS/cache middleware on every route.
 
     Auth routes are intercepted here, outside routing, so existing/future routes,
-    mounts, docs, OpenAPI, and 404/405 responses all require an owner session.
+    mounts, docs, OpenAPI, and 404/405 responses all require a verified session.
+    FOUNDEROS_WORKSPACE_MODE must be exactly 'shared' or 'private'. Shared mode
+    grants every signed-in user access to existing business routes; configure it
+    only after the human approves that data policy. No mode is selected here.
+
+    Private mode requires data_access_scope(user_id), a synchronous context
+    manager factory supplied by the data-policy owner. It must enforce private
+    access, set/reset any ContextVars in try/finally, and propagate exceptions.
+    The context wraps the entire downstream ASGI call (including streaming and
+    background work awaited by the app). Detached tasks need their own policy.
+    Auth/profile endpoints work without this hook; every business route is 503.
+    Neither email nor user ID implicitly maps to any legacy business records.
     Health is always minimal. Misconfiguration or missing schema never bypasses
     authentication. There is deliberately no development or production bypass.
     """
     if getattr(app.state, "owner_auth_installed", False):
         return
-    app.add_middleware(_OwnerAuthMiddleware)
+    app.add_middleware(_OwnerAuthMiddleware, data_access_scope=data_access_scope)
     app.state.owner_auth_installed = True

@@ -3,7 +3,12 @@ import { invalidateAll } from "@/api/cache";
 export const AUTH_EXPIRED_EVENT = "founderos:auth-expired";
 export const GOOGLE_LOGIN_URL = "/api/auth/login";
 
-export type OwnerSession = { authenticated: true; email: string };
+export type OwnerSession = {
+  authenticated: true;
+  email: string;
+  user_id: number;
+  workspace_mode: "shared" | "private";
+};
 
 export function clearPrivateClientState(): void {
   invalidateAll();
@@ -33,7 +38,10 @@ export async function checkOwnerSession(signal?: AbortSignal): Promise<OwnerSess
   if (
     !session || typeof session !== "object" ||
     !("authenticated" in session) || session.authenticated !== true ||
-    !("email" in session) || typeof session.email !== "string" || !session.email
+    !("email" in session) || typeof session.email !== "string" || !session.email ||
+    !("user_id" in session) || typeof session.user_id !== "number" ||
+    !Number.isSafeInteger(session.user_id) || session.user_id < 1 ||
+    !("workspace_mode" in session) || !["shared", "private"].includes(String(session.workspace_mode))
   ) {
     throw new Error("Your sign-in could not be verified. Please retry.");
   }

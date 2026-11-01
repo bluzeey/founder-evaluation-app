@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 os.environ.setdefault("DATABASE_URL", "sqlite://")
-os.environ.setdefault("OPENAI_API_KEY", "manual-ai-test-key")
+os.environ.setdefault("OPENROUTER_API_KEY", "manual-ai-test-key")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest

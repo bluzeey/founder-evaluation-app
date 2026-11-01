@@ -6,6 +6,34 @@ import type { QueuedResponse } from "@/types/backend";
 const API_BASE = "/api";
 
 type TaskStatus = { status: string; error?: string | null };
+type AIReadiness = { enabled: boolean; mode: "manual" };
+const SETUP_PENDING = "AI setup pending";
+
+function useAIReadiness() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const active = useRef(false);
+  const checking = useRef(false);
+  const refresh = async () => {
+    if (checking.current) return;
+    checking.current = true;
+    try {
+      const config = await manualAIRequest<AIReadiness>("/v1/ai/config");
+      if (active.current) setEnabled(config.enabled === true && config.mode === "manual");
+    } catch {
+      if (active.current) setEnabled(false);
+    } finally {
+      checking.current = false;
+    }
+  };
+  useEffect(() => {
+    active.current = true;
+    void refresh();
+    return () => { active.current = false; };
+  }, []);
+  // This only reads local readiness. It never starts or retries paid work.
+  useAdaptivePolling(refresh, 30000);
+  return { enabled, setEnabled };
+}
 
 // Same owner session cookie as the parent's authenticated API client.
 export async function manualAIRequest<T>(path: string, init?: RequestInit): Promise<T> {
@@ -28,6 +56,7 @@ export function ManualAIAction({ label, run, disabled, onComplete }: {
   disabled?: boolean;
   onComplete?: () => void | Promise<void>;
 }) {
+  const { enabled, setEnabled } = useAIReadiness();
   const [busy, setBusy] = useState(false);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
@@ -38,7 +67,7 @@ export function ManualAIAction({ label, run, disabled, onComplete }: {
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const start = async () => {
-    if (submitting.current) return;
+    if (submitting.current || disabled || enabled !== true) return;
     submitting.current = true;
     setBusy(true);
     setError("");
@@ -53,7 +82,9 @@ export function ManualAIAction({ label, run, disabled, onComplete }: {
     } catch (err) {
       if (!mounted.current) return;
       setMessage("");
-      setError((err as Error).message || "Could not start AI");
+      const detail = (err as Error).message || "Could not start AI";
+      if (detail === SETUP_PENDING) setEnabled(false);
+      setError(detail === SETUP_PENDING ? "" : detail);
       setBusy(false);
       submitting.current = false;
     }
@@ -91,11 +122,14 @@ export function ManualAIAction({ label, run, disabled, onComplete }: {
 
   return (
     <div className="space-y-1">
-      <button type="button" onClick={start} disabled={disabled || busy}
+      <button type="button" onClick={start} disabled={disabled || busy || enabled !== true}
         className="inline-flex items-center gap-2 rounded-sm bg-action px-3 py-2 text-sm font-medium text-paper disabled:opacity-50">
         {busy ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
         {label}
       </button>
+      {enabled !== true && <p role="status" className="text-xs text-concrete">
+        {enabled === null ? "Checking AI setup…" : SETUP_PENDING}
+      </p>}
       {message && <p role="status" className="text-xs text-concrete">{message}</p>}
       {error && <p role="alert" className="text-xs text-contradiction">{error}</p>}
     </div>

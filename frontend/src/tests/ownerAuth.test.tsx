@@ -24,9 +24,10 @@ describe("private owner session", () => {
   });
 
   it("uses a same-origin uncached cookie request without a browser access key", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ authenticated: true, email: "owner@example.test" }));
+    const user = { authenticated: true, email: "person@example.test", user_id: 2, workspace_mode: "private" };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(user));
     vi.stubGlobal("fetch", fetchMock);
-    await expect(checkOwnerSession()).resolves.toEqual({ authenticated: true, email: "owner@example.test" });
+    await expect(checkOwnerSession()).resolves.toEqual(user);
     expect(fetchMock).toHaveBeenCalledWith("/api/auth/me", expect.objectContaining({ credentials: "same-origin", cache: "no-store" }));
     expect(fetchMock.mock.calls[0][1]).not.toHaveProperty("headers");
   });

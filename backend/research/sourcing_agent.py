@@ -1,21 +1,10 @@
-import json
-import logging
-import os
-import re
 from typing import Any, List, Optional
 
-import httpx
-
-from .api_lock import api_lock, is_web_search_enabled
-from .http_utils import raise_for_status
+from .api_lock import is_web_search_enabled
+from .http_utils import chat_completion, parse_completion
+from .openrouter_config import get_api_key, load_config
 from .prompts import SOURCING_SYSTEM_PROMPT
 from .web_search import prepare_web_search
-
-logger = logging.getLogger(__name__)
-
-OPENAI_BASE_URL = os.environ.get(
-    "OPENAI_BASE_URL", "https://api.openai.com/v1/chat/completions"
-)
 
 
 class SourcingAgent:
@@ -27,23 +16,14 @@ class SourcingAgent:
         model: Optional[str] = None,
         timeout: Optional[float] = None,
     ):
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
-        if not self.api_key:
-            raise RuntimeError("OPENAI_API_KEY is not set")
-
-        self.model = model or os.environ.get("OPENAI_SOURCING_MODEL", "gpt-5")
-        self.timeout = float(timeout or os.environ.get("OPENAI_TIMEOUT", "60"))
-        self.max_tokens = int(os.environ.get("OPENAI_MAX_TOKENS", "8000"))
+        self._api_key_override = api_key
+        config = load_config(api_key, model, timeout, default_timeout=60, default_max_tokens=8000)
+        self.api_key = config.api_key
+        self.model = config.model
+        self.timeout = config.timeout
+        self.max_tokens = config.max_tokens
         self.enable_web_search = is_web_search_enabled(
             "OPENAI_ENABLE_WEB_SEARCH_SOURCING", "true"
-        )
-
-        logger.info(
-            "sourcing_agent.configured model=%s timeout=%s max_tokens=%s web_search=%s",
-            self.model,
-            self.timeout,
-            self.max_tokens,
-            self.enable_web_search,
         )
 
     def discover(
@@ -66,19 +46,7 @@ class SourcingAgent:
         Returns:
             Parsed JSON dict with key "recommendations".
         """
-        logger.info(
-            "sourcing_agent.discover.start sectors=%s stages=%s geographies=%s risk=%s sources=%s",
-            sectors,
-            stages,
-            geographies,
-            risk_appetite,
-            sources,
-        )
-
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        self.api_key = get_api_key(self._api_key_override)
 
         source_lines = []
         if sources:
@@ -120,51 +88,12 @@ class SourcingAgent:
             "max_completion_tokens": self.max_tokens,
         }
 
-        with httpx.Client(timeout=self.timeout) as client:
-            logger.info(
-                "sourcing_agent.discover.request model=%s enable_web_search=%s",
-                self.model,
-                self.enable_web_search,
-            )
-            with api_lock():
-                response = client.post(OPENAI_BASE_URL, headers=headers, json=payload)
-            raise_for_status(response)
-            data = response.json()
+        data = chat_completion(payload, api_key=self.api_key, timeout=self.timeout)
 
-        parsed = self._parse_response(data)
-        recommendations = parsed.get("recommendations", []) or []
-        logger.info(
-            "sourcing_agent.discover.end recommendations=%s",
-            len(recommendations),
-        )
-        return parsed
+        return self._parse_response(data)
 
     def _parse_response(self, data: dict[str, Any]) -> dict[str, Any]:
-        try:
-            choice = data["choices"][0]
-        except (KeyError, IndexError) as exc:
-            logger.error("sourcing_agent.discover.unexpected_response data=%s", data)
-            raise ValueError(f"Unexpected OpenAI response shape: {data}") from exc
-
-        message = choice.get("message", {})
-        content = message.get("content", "")
-
-        content = content.strip()
-        if content.startswith("```"):
-            content = re.sub(r"^```(?:json)?\s*", "", content, flags=re.IGNORECASE)
-            content = re.sub(r"\s*```$", "", content)
-            content = content.strip()
-
-        if not content:
-            logger.error("sourcing_agent.discover.empty_content")
-            raise ValueError("OpenAI response contained no content")
-
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError as exc:
-            logger.error("sourcing_agent.discover.invalid_json content=%s", content)
-            raise ValueError(f"OpenAI response was not valid JSON:\n{content}") from exc
-
+        parsed = parse_completion(data)
         self._validate_recommendations(parsed)
         return parsed
 
@@ -172,41 +101,9 @@ class SourcingAgent:
         """Ensure recommendations contain the minimum fields for a real candidate."""
         recommendations = parsed.get("recommendations")
         if not isinstance(recommendations, list):
-            logger.error(
-                "sourcing_agent.discover.recommendations_not_list type=%s",
-                type(recommendations).__name__,
-            )
             raise ValueError("Response missing 'recommendations' list")
-
         if not recommendations:
-            logger.warning("sourcing_agent.discover.empty_recommendations")
             raise ValueError("Sourcing agent returned empty recommendations")
-
-        valid_count = 0
-        for idx, rec in enumerate(recommendations):
-            name = rec.get("name") if isinstance(rec, dict) else None
-            source_url = rec.get("source_url") if isinstance(rec, dict) else None
-            if name and source_url:
-                valid_count += 1
-            else:
-                logger.warning(
-                    "sourcing_agent.discover.invalid_recommendation idx=%s name=%s source_url=%s",
-                    idx,
-                    name,
-                    source_url,
-                )
-
-        if valid_count == 0:
-            logger.error(
-                "sourcing_agent.discover.no_valid_recommendations count=%s",
-                len(recommendations),
-            )
-            raise ValueError(
-                "No valid recommendations: each recommendation needs a name and source_url"
-            )
-
-        logger.info(
-            "sourcing_agent.discover.validated count=%s valid=%s",
-            len(recommendations),
-            valid_count,
-        )
+        if not any(isinstance(rec, dict) and rec.get("name") and rec.get("source_url")
+                   for rec in recommendations):
+            raise ValueError("No valid recommendations: each recommendation needs a name and source_url")

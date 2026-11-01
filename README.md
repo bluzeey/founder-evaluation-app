@@ -2,9 +2,10 @@
 
 **Evidence-first founder intelligence for early-stage investors.**
 
-## Private access and manual AI
+## Google sign-in and manual AI
 
-The workspace requires Google sign-in for one explicitly approved owner account.
+The workspace accepts any verified Google account. Each identity is keyed by
+Google's stable subject, never by an email allowlist or a shared access key.
 The backend verifies both the Google identity and a server-side session before
 serving records or accepting changes. The browser never stores an API key or
 Google token. Sign-out revokes the session and clears cached workspace data.
@@ -26,13 +27,17 @@ remain private and uncached.
 Configure these values only in the backend's private runtime settings:
 
 - `FOUNDEROS_GOOGLE_CLIENT_ID` and `FOUNDEROS_GOOGLE_CLIENT_SECRET`
-- `FOUNDEROS_ALLOWED_EMAIL`: the one approved Google account
 - `FOUNDEROS_FRONTEND_ORIGIN`: the canonical HTTPS frontend origin
 - `FOUNDEROS_REDIRECT_URI`: that origin followed by `/api/auth/google/callback`
+- `FOUNDEROS_WORKSPACE_MODE`: an explicitly chosen `shared` or `private` policy.
+  Shared mode lets every signed-in user read and edit the same records. Private
+  mode requires an installed per-user data scope; it blocks business routes
+  until that scope is available. Missing or invalid mode also blocks access.
 
 Register that exact redirect URI in the Google web client. Apply `alembic
-upgrade head` after taking a database backup. The owner-auth revision adds only
-authentication tables. Missing configuration, schema or sign-in fails closed;
+upgrade head` after taking a database backup. Authentication migrations preserve
+business records and never assign existing records to a new signup. Missing
+configuration, schema or sign-in fails closed;
 `/health` remains a minimal public health response. Existing business records
 are preserved. Google sign-in uses only basic identity scopes.
 
@@ -94,7 +99,7 @@ founder-evaluation-app/
 
 - **Frontend:** Desktop-first investor interface and mobile-friendly founder assessment workspace.
 - **Backend:** FastAPI application that owns data models, evidence normalization, deterministic scoring, and workflow endpoints.
-- **AI layer:** Agents for ingestion, gap planning, assessment conduction, independent grading, diligence validation, and memo generation. Model calls are routed through environment variables and use **OpenAI** (`gpt-5`) with **Tavily** for real-time web search. The deterministic score calculation itself lives in Python code, not in an LLM.
+- **AI layer:** Explicit manual workflows use **OpenRouter** (`openai/gpt-5` by default) with **Tavily** for web search. The deterministic score calculation itself lives in Python code, not in an LLM.
 - **Memory layer:** Founder Score persists across ventures; opportunity axes (Founder-Market Fit, Team Completeness, Market, Idea-vs-Market) are contextual.
 
 ## Founder Score outputs
@@ -180,15 +185,21 @@ and enrichment dispatch tasks return without scheduling work. Old provider
 messages without a fresh grant for their exact workflow, target and task ID are
 also skipped. Status polling never starts or retries a workflow.
 
-- **Manual sourcing:** `POST /v1/founders/pool/refresh` and `POST /v1/theses/{id}/source-now` require the signed-in owner. Sourcing does not automatically start social research or estimation for each result.
+- **Manual sourcing:** `POST /v1/founders/pool/refresh` and `POST /v1/theses/{id}/source-now` require a signed-in Google session. Sourcing does not automatically start social research or estimation for each result.
 - **3-stage chain:** for each candidate, `POST /v1/founders/{id}/enrich` queues `enrich_founder_chain`, which runs sequentially:
   1. **Social** — re-runs LinkedIn/GitHub background research (skipped if no links).
-  2. **Deep web** — OpenAI + Tavily research across `news`, `company_blog`, `twitter`; persists `ai_research_summary` + sources and adds evidence.
+  2. **Deep web** — OpenRouter + Tavily research across `news`, `company_blog`, `twitter`; persists `ai_research_summary` + sources and adds evidence.
   3. **Estimate** — derives one evidence item per dimension from all available context and re-scores.
   Each stage records an `EnrichmentRun` row with `confidence_before`/`confidence_after`; `enrichment_attempts` is incremented when the chain finishes.
 - **Observability:** `GET /v1/enrichment/runs?founder_id=…` lists recent runs; `GET /v1/enrichment/status` returns the count of founders below threshold and the last dispatch time.
 
 ## AI configuration
+
+AI remains inactive until `OPENROUTER_API_KEY` is added to the backend and worker
+runtime settings. Buttons show **AI setup pending** while setup is missing;
+manual POST requests also fail before queueing or web search. Existing OpenAI
+or UMANS credentials are never used as a fallback. `/v1/ai/config` reports local
+readiness behind sign-in, without contacting a provider or revealing secrets.
 
 Set provider values only in the backend and worker runtime settings:
 
@@ -197,14 +208,10 @@ DATABASE_URL=postgresql://postgres:password@localhost:5432/founderos
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
 
-UMANS_API_KEY=sk-your-umans-api-key
-
-OPENAI_API_KEY=sk-your-openai-api-key
-# gpt-4o is deprecated; use gpt-5.
-OPENAI_MODEL=gpt-5
-OPENAI_SOURCING_MODEL=gpt-5
-OPENAI_SOCIAL_MODEL=gpt-5
-OPENAI_DOCUMENT_MODEL=gpt-5
+OPENROUTER_API_KEY=your-openrouter-key
+OPENROUTER_MODEL=openai/gpt-5
+OPENROUTER_TIMEOUT=60
+OPENROUTER_MAX_TOKENS=8000
 
 # Tavily configuration
 TAVILY_API_KEY=tvly-your-tavily-api-key
@@ -235,11 +242,11 @@ The deterministic score engine does not call an LLM; only the evidence extractio
 
 ### Avoiding API rate limits in production
 
-1. **Use Tavily for web search**: Real-time search is handled by `TAVILY_API_KEY`, so OpenAI only does reasoning. This removes provider-specific web-search overload errors.
-2. **Serialize calls**: `API_LOCK_*` settings ensure only one OpenAI request is in flight at a time across sourcing, social research, and document extraction.
+1. **Use Tavily for web search**: Real-time search is handled by `TAVILY_API_KEY`, so model requests through OpenRouter handle reasoning.
+2. **Serialize calls**: `API_LOCK_*` settings ensure only one model request is in flight at a time across sourcing, social research, and document extraction.
 3. **Disable web search where it is not needed**: `OPENAI_ENABLE_WEB_SEARCH_SOCIAL=false` avoids redundant searches when LinkedIn/GitHub URLs are already provided.
-4. **Use the circuit breaker**: After `CIRCUIT_BREAKER_FAILURE_THRESHOLD` consecutive retryable failures, all new OpenAI calls are rejected for `CIRCUIT_BREAKER_COOLDOWN_SECONDS` to stop retry storms.
-5. **Slow down retries**: Increase `MIN_RETRY_DELAY_SECONDS` and `*_RETRY_BASE_DELAY` if OpenAI keeps returning 429s.
+4. **Use the circuit breaker**: After `CIRCUIT_BREAKER_FAILURE_THRESHOLD` consecutive retryable failures, new model calls are rejected for `CIRCUIT_BREAKER_COOLDOWN_SECONDS` to stop retry storms.
+5. **Slow down retries**: Increase `MIN_RETRY_DELAY_SECONDS` and `*_RETRY_BASE_DELAY` if the provider keeps returning 429s.
 
 ## Hackathon demonstrator flow
 
