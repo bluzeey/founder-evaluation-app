@@ -122,7 +122,7 @@ def test_source_now_creates_job(mock_agent_cls, client, thesis, manual_store):
     assert any(p["name"] == "Sourced Founder" for p in pool)
 
 
-def test_dispatch_sourcing_jobs_stays_inert_even_when_due(client, thesis):
+def test_dispatch_sourcing_jobs_stays_inert_even_when_due(client, thesis, db):
     # Create a schedule with a far-future next_run_at so it is not due.
     r = client.post(
         "/v1/sourcing/schedules",

@@ -72,6 +72,7 @@ from tasks.estimation_task import run_estimate
 from tasks.enrichment_task import enrich_founder_chain
 from ai_policy import queue_manual_task, require_manual_ai, readiness
 from owner_auth import install_owner_auth
+from private_workspaces import private_data_scope
 
 app = FastAPI(title="FounderOS API", version="0.1.0")
 
@@ -124,7 +125,7 @@ class CacheHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(CacheHeadersMiddleware)
 
 # Outermost guard protects existing and future routes, including manual AI.
-install_owner_auth(app)
+install_owner_auth(app, data_access_scope=private_data_scope)
 
 
 class CreateFounderRequest(BaseModel):

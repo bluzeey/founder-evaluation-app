@@ -93,10 +93,39 @@ def test_postgres_owner_migration_preserves_business_data(monkeypatch):
         assert not any(name.startswith("owner_auth_") for name in sa.inspect(engine).get_table_names())
         command.upgrade(config, "head")
         assert business_signature() == before
+        # Legacy adoption is an explicit operator operation tied to an already
+        # verified immutable subject, never to the first signup or email match.
+        import database
+        import private_workspaces as private
+        monkeypatch.setattr(database, "engine", engine)
+        adopted = private.copy_legacy_to_verified_owner("synthetic-verified-owner", "same@example.test")
+        assert adopted["tables_preserved"] == len(before)
+        assert adopted["rows_preserved"] == sum(count for count, digest in before.values())
+        with engine.begin() as connection:
+            second = connection.execute(owner.insert().values(email="same@example.test", google_sub="synthetic-other-subject", created_at=2).returning(owner.c.id)).scalar_one()
+        private.provision_workspace(second)
+        with engine.connect() as connection:
+            assert private._signature(connection, private.schema_for_user(adopted["user_id"])) == private._signature(connection, "public")
+            assert all(count == 0 for count, digest in private._signature(connection, private.schema_for_user(second)).values())
+        for subject in ("synthetic-verified-owner", "synthetic-other-subject"):
+            with pytest.raises(Exception):
+                private.copy_legacy_to_verified_owner(subject, "same@example.test")
+        with pytest.raises(RuntimeError, match="workspace registry"):
+            command.downgrade(config, "f8a9b0c1d2e3")
+        assert business_signature() == before
     finally:
         # The guarded local DB contains only this test's fixtures and historical
         # demo seeds. Avoid unrelated historical downgrade implementations.
         with engine.begin() as connection:
+            from private_workspaces import role_for_user
+            for schema in connection.execute(sa.text("SELECT nspname FROM pg_namespace WHERE nspname LIKE 'founderos_user_%'")).scalars():
+                assert schema.removeprefix("founderos_user_").isdigit()
+                connection.exec_driver_sql('DROP SCHEMA "' + schema + '" CASCADE')
+            role_prefix = role_for_user(connection, 1).rsplit("_", 1)[0] + "_"
+            for role in connection.execute(sa.text("SELECT rolname FROM pg_roles WHERE rolname LIKE :prefix"), {"prefix": role_prefix + "%"}).scalars():
+                assert role.removeprefix(role_prefix).isdigit()
+                connection.exec_driver_sql('DROP OWNED BY "' + role + '"')
+                connection.exec_driver_sql('DROP ROLE "' + role + '"')
             connection.exec_driver_sql("DROP SCHEMA public CASCADE")
             connection.exec_driver_sql("CREATE SCHEMA public")
         engine.dispose()

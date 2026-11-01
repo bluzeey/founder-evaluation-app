@@ -8,6 +8,7 @@ import importlib
 import io
 import json
 import os
+import socket
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -35,6 +36,10 @@ from celery_app import app as celery
 from founder_csv_import import REQUIRED_COLUMNS
 from models import FounderPoolItem
 from tasks import document_extraction, enrichment_task, estimation_task, founder_pool, social_research
+from workspace_context import current_user_id, user_scope
+
+TEST_USER_ID = 101
+OTHER_USER_ID = 202
 
 
 @compiles(JSONB, "sqlite")
@@ -43,8 +48,11 @@ def sqlite_jsonb(_type, _compiler, **_kwargs):
 
 
 @pytest.fixture(autouse=True)
-def clean_tables():
+def clean_tables(monkeypatch):
     # Override the parent's PostgreSQL autouse fixture for this isolated module.
+    poison = Mock(side_effect=AssertionError("Network is forbidden in isolated tests"))
+    monkeypatch.setattr(socket.socket, "connect", poison)
+    monkeypatch.setattr(socket.socket, "connect_ex", poison)
     yield
 
 
@@ -68,9 +76,16 @@ class FakeRedis:
 
 @pytest.fixture
 def isolated(monkeypatch):
-    engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
-    database.Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine)
+    engines = {}
+    factories = {}
+    for actor in (TEST_USER_ID, OTHER_USER_ID):
+        engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+        database.Base.metadata.create_all(engine)
+        engines[actor] = engine
+        factories[actor] = sessionmaker(bind=engine)
+
+    def factory():
+        return factories[current_user_id()]()
     for module in (database, social_research, founder_pool, enrichment_task, document_extraction):
         monkeypatch.setattr(module, "SessionLocal", factory)
     store = FakeRedis()
@@ -94,10 +109,14 @@ def isolated(monkeypatch):
     api.include_router(main.app.router)
 
     @api.middleware("http")
-    async def synthetic_verified_owner(request, call_next):
-        # Test-only stand-in for the parent owner middleware's verified state.
+    async def synthetic_verified_user(request, call_next):
+        # Test-only verified identities. Email is deliberately identical for both.
         if request.headers.get("x-test-owner") == "verified":
+            actor = int(request.headers.get("x-test-user", TEST_USER_ID))
             request.state.owner_email = "owner@example.test"
+            request.state.user_id = actor
+            with user_scope(actor):
+                return await call_next(request)
         return await call_next(request)
 
     def db_dependency():
@@ -105,9 +124,10 @@ def isolated(monkeypatch):
             yield session
 
     api.dependency_overrides[database.get_db] = db_dependency
-    with TestClient(api, headers={"x-test-owner": "verified"}) as client:
+    with user_scope(TEST_USER_ID), TestClient(api, headers={"x-test-owner": "verified"}) as client:
         yield SimpleNamespace(client=client, factory=factory, store=store, providers=providers, queues=queues)
-    engine.dispose()
+    for engine in engines.values():
+        engine.dispose()
 
 
 def create_case(env, **extra):
@@ -220,17 +240,18 @@ def test_old_automatic_jobs_skip_before_any_access(monkeypatch, task, args):
 ])
 def test_explicit_manual_request_queues_exactly_requested_task(isolated, workflow, path, task):
     fid, _ = create_case(isolated)
-    response = isolated.client.post(f"/v1/founders/{fid}/{path}", json={"manual_intent": "client-forgery"})
+    response = isolated.client.post(f"/v1/founders/{fid}/{path}", json={"manual_intent": "client-forgery", "manual_actor_id": OTHER_USER_ID, "actor_id": OTHER_USER_ID})
     assert response.status_code == 200, response.text
     task.apply_async.assert_called_once()
     call = task.apply_async.call_args.kwargs
     assert response.json()["task_id"] == call["task_id"]
+    assert call["kwargs"]["manual_actor_id"] == TEST_USER_ID
     intent = call["kwargs"]["manual_intent"]
     assert intent != "client-forgery"
-    assert ai_policy.manual_allowed(intent, (workflow,), fid, call["task_id"])
-    assert not ai_policy.manual_allowed(intent, ("source",), fid, call["task_id"])
-    assert not ai_policy.manual_allowed(intent, (workflow,), "another-founder", call["task_id"])
-    assert not ai_policy.manual_allowed(intent, (workflow,), fid, "another-task")
+    assert ai_policy.manual_allowed(intent, (workflow,), fid, call["task_id"], TEST_USER_ID)
+    assert not ai_policy.manual_allowed(intent, ("source",), fid, call["task_id"], TEST_USER_ID)
+    assert not ai_policy.manual_allowed(intent, (workflow,), "another-founder", call["task_id"], TEST_USER_ID)
+    assert not ai_policy.manual_allowed(intent, (workflow,), fid, "another-task", TEST_USER_ID)
     assert sum(queue.call_count for queue in isolated.queues) == 1
     for provider in isolated.providers:
         provider.assert_not_called()
@@ -287,7 +308,7 @@ def test_explicit_chain_requests_exact_three_stages(isolated, monkeypatch):
         result = enrichment_task.enrich_founder_chain.run(**call["kwargs"])
         assert result["status"] == "completed"
         for stage in stages:
-            stage.assert_called_once_with(fid, manual_intent=call["kwargs"]["manual_intent"], manual_task_id=call["task_id"])
+            stage.assert_called_once_with(fid, manual_intent=call["kwargs"]["manual_intent"], manual_task_id=call["task_id"], manual_actor_id=TEST_USER_ID)
         assert sum(q.call_count for q in isolated.queues) == 1
     finally:
         enrichment_task.enrich_founder_chain.pop_request()
@@ -329,8 +350,13 @@ def test_redis_credentials_never_logged(monkeypatch, caplog):
     url = "redis://username:credential-test-secret@localhost:6379/0"
     monkeypatch.setenv("CELERY_BROKER_URL", url)
     monkeypatch.setenv("CELERY_RESULT_BACKEND", url)
-    with caplog.at_level("INFO"):
-        importlib.reload(celery_app)
+    original_app = celery_app.app
+    try:
+        with caplog.at_level("INFO"):
+            importlib.reload(celery_app)
+    finally:
+        # Tasks and subsequent status tests keep the same Celery application.
+        celery_app.app = original_app
     assert "celery_app.configured" in caplog.text
     assert "credential-test-secret" not in caplog.text
     assert "redis://" not in caplog.text
@@ -419,8 +445,33 @@ def test_expired_or_unavailable_grants_fail_closed(isolated, monkeypatch):
     key = f"manual-ai:grant:{intent}"
     grant = json.loads(isolated.store.get(key)); grant["expires_at"] = 0
     isolated.store.set(key, json.dumps(grant))
-    assert not ai_policy.manual_allowed(intent, ("estimate",), fid, call["task_id"])
+    assert not ai_policy.manual_allowed(intent, ("estimate",), fid, call["task_id"], TEST_USER_ID)
     monkeypatch.setattr(ai_policy, "_store", Mock(side_effect=RuntimeError("Unavailable")))
-    assert not ai_policy.manual_allowed(intent, ("estimate",), fid, call["task_id"])
+    assert not ai_policy.manual_allowed(intent, ("estimate",), fid, call["task_id"], TEST_USER_ID)
     for provider in isolated.providers:
         provider.assert_not_called()
+
+
+def test_status_is_private_even_with_same_compatibility_email(isolated, monkeypatch):
+    fid, _ = create_case(isolated)
+    queued = isolated.client.post(f"/v1/founders/{fid}/estimate").json()
+    backend = Mock(return_value=SimpleNamespace(state="SUCCESS", result={"status": "completed"}))
+    monkeypatch.setattr(celery, "AsyncResult", backend)
+    path = f"/v1/ai/tasks/{queued['task_id']}"
+    for requested in (path, "/v1/ai/tasks/unknown"):
+        response = isolated.client.get(requested, headers={"x-test-user": str(OTHER_USER_ID)})
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Manual AI task not found"}
+    backend.assert_not_called()
+    assert isolated.client.get(path).json()["status"] == "completed"
+    backend.assert_called_once_with(queued["task_id"])
+
+
+def test_other_workspace_cannot_queue_a_founder_workflow(isolated):
+    fid, _ = create_case(isolated)
+    for action in ("estimate", "enrich", "research-social"):
+        response = isolated.client.post(f"/v1/founders/{fid}/{action}",
+                                       headers={"x-test-user": str(OTHER_USER_ID)},
+                                       json={"manual_actor_id": TEST_USER_ID})
+        assert response.status_code == 404
+    assert_quiet(isolated)

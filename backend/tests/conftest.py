@@ -44,10 +44,28 @@ def _business_runtime():
     from main import app
     from owner_auth import AUTH_METADATA
 
+    # All schemas in this guarded database are disposable test fixtures.
+    with engine.begin() as connection:
+        names = connection.execute(text("SELECT nspname FROM pg_namespace WHERE nspname LIKE 'founderos_user_%'")).scalars().all()
+        for name in names:
+            assert name.removeprefix("founderos_user_").isdigit()
+            connection.exec_driver_sql('DROP SCHEMA "' + name + '" CASCADE')
+        from private_workspaces import role_for_user
+        role_prefix = role_for_user(connection, 1).rsplit("_", 1)[0] + "_"
+        roles = connection.execute(text("SELECT rolname FROM pg_roles WHERE rolname LIKE :prefix"), {"prefix": role_prefix + "%"}).scalars().all()
+        for name in roles:
+            assert name.removeprefix(role_prefix).isdigit()
+            connection.exec_driver_sql('DROP OWNED BY "' + name + '"')
+            connection.exec_driver_sql('DROP ROLE "' + name + '"')
     AUTH_METADATA.drop_all(bind=engine)
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     AUTH_METADATA.create_all(bind=engine)
+    import owner_auth as auth
+    from private_workspaces import provision_workspace
+    with engine.begin() as connection:
+        connection.execute(auth.owner.insert().values(id=1, email="owner@example.test", google_sub="pytest-owner", created_at=auth._now()))
+    provision_workspace(1)
 
     def override_get_db():
         session = SessionLocal()
@@ -64,11 +82,13 @@ def _business_runtime():
 def db():
     """Provide a fresh DB session for a test."""
     _, SessionLocal = _business_runtime()
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    from workspace_context import user_scope
+    with user_scope(1):
+        db = SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
 
 
 @pytest.fixture
@@ -85,22 +105,18 @@ def owner_session(monkeypatch):
         "GOOGLE_CLIENT_ID": "pytest-client", "GOOGLE_CLIENT_SECRET": "pytest-secret",
         "REDIRECT_URI": "https://founder-os-dev.vercel.app/api/auth/google/callback",
         "FRONTEND_ORIGIN": "https://founder-os-dev.vercel.app",
-        "WORKSPACE_MODE": "shared",  # Synthetic test data only; no deployment policy.
+        "WORKSPACE_MODE": "private",
     }.items():
         monkeypatch.setenv("FOUNDEROS_" + name, value)
     raw, now = secrets.token_urlsafe(32), auth._now()
-    with SessionLocal() as session:
-        session.execute(auth.sessions.delete())
-        session.execute(auth.oauth_states.delete())
-        session.execute(auth.owner.delete())
-        session.execute(auth.owner.insert().values(
-            id=1, email="owner@example.test", google_sub="pytest-owner", created_at=now,
-        ))
-        session.execute(auth.sessions.insert().values(
+    from database import engine
+    with engine.begin() as connection:
+        connection.execute(auth.sessions.delete())
+        connection.execute(auth.oauth_states.delete())
+        connection.execute(auth.sessions.insert().values(
             session_hash=auth._hash(raw), owner_id=1, created_at=now,
             expires_at=now + auth.SESSION_TTL,
         ))
-        session.commit()
     return raw
 
 
@@ -124,14 +140,16 @@ def clean_tables(request):
     if request.node.path.name == "test_owner_auth.py":
         return
     _, SessionLocal = _business_runtime()
-    db = SessionLocal()
-    try:
-        db.execute(
-            text(
-                "TRUNCATE founder_screening_profiles, founder_csv_imports, claims, opportunities, score_snapshots, evidence_items, "
-                "social_media_backgrounds, founder_pool_items, theses, founders CASCADE"
+    from workspace_context import user_scope
+    with user_scope(1):
+        db = SessionLocal()
+        try:
+            db.execute(
+                text(
+                    "TRUNCATE founder_screening_profiles, founder_csv_imports, claims, opportunities, score_snapshots, evidence_items, "
+                    "social_media_backgrounds, founder_pool_items, theses, founders CASCADE"
+                )
             )
-        )
-        db.commit()
-    finally:
-        db.close()
+            db.commit()
+        finally:
+            db.close()

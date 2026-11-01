@@ -1,10 +1,11 @@
 """Manual-only AI policy. No environment switch can re-enable automatic work.
 
 Only protected HTTP handlers issue grants. Each opaque, short-lived grant names
-one task id, workflow and target; it is not a blanket Celery context flag.
+one actor, task id, workflow and target; it is not a blanket Celery context flag.
 Legacy messages have no grant and return before Redis, DB or provider access.
 """
 import json
+import math
 import os
 import secrets
 import time
@@ -14,6 +15,7 @@ from typing import Optional
 import redis
 from fastapi import HTTPException, Request
 from research.openrouter_config import SETUP_PENDING, readiness
+from workspace_context import current_user_id, validate_user_id
 
 GRANT_TTL_SECONDS = 1800
 STATUS_TTL_SECONDS = 86400
@@ -21,7 +23,10 @@ STATUS_TTL_SECONDS = 86400
 
 async def require_manual_ai(request: Request):
     """The session middleware sets this only after Google session validation."""
-    if not getattr(request.state, "owner_email", None):
+    actor = getattr(request.state, "user_id", None)
+    if not _valid_actor(actor):
+        raise HTTPException(401, "Sign in with Google before running AI")
+    if _request_actor() != actor:
         raise HTTPException(401, "Sign in with Google before running AI")
     # Status/config reads remain available when setup is pending.
     if request.method not in {"GET", "HEAD", "OPTIONS"}:
@@ -44,28 +49,64 @@ def skipped_manual_required(**details):
     return {"status": "skipped_manual_required", "reason": "manual_required", **details}
 
 
-def manual_allowed(intent: Optional[str], workflows, target: str, task_id: Optional[str]) -> bool:
+def _valid_actor(actor) -> bool:
+    # bool, numeric strings and floats must never alias another user's id.
+    try:
+        validate_user_id(actor)
+        return True
+    except RuntimeError:
+        return False
+
+
+def _request_actor() -> int:
+    try:
+        actor = current_user_id()
+    except RuntimeError:
+        raise HTTPException(401, "Sign in with Google before running AI") from None
+    if not _valid_actor(actor):
+        raise HTTPException(401, "Sign in with Google before running AI")
+    return actor
+
+
+def manual_allowed(intent: Optional[str], workflows, target: str, task_id: Optional[str],
+                   manual_actor_id: Optional[int] = None) -> Optional[int]:
+    """Return the grant's validated actor, never an ambient worker identity.
+
+    Callers must enter user_scope(actor) around the entire admitted workflow.
+    Missing legacy credentials return before context, Redis or provider access.
+    """
+    if (not isinstance(intent, str) or not intent or not isinstance(task_id, str)
+            or not task_id or not _valid_actor(manual_actor_id)):
+        return None
     # Recheck in workers too: a previously issued grant cannot bypass setup.
     if not readiness()["enabled"]:
-        return False
-    if not isinstance(intent, str) or not intent or not task_id:
-        return False
+        return None
     try:
         raw = _store().get(f"manual-ai:grant:{intent}")
         grant = json.loads(raw) if raw else {}
-        return (grant.get("workflow") in workflows and grant.get("target") == target
-                and grant.get("task_id") == task_id and grant.get("expires_at", 0) > time.time())
+        if not isinstance(grant, dict):
+            return None
+        expires_at = grant.get("expires_at")
+        if (grant.get("workflow") in workflows and grant.get("target") == target
+                and grant.get("intent") == intent and grant.get("task_id") == task_id
+                and _valid_actor(grant.get("actor_id")) and grant["actor_id"] == manual_actor_id
+                and type(expires_at) in (int, float) and math.isfinite(expires_at)
+                and expires_at > time.time()):
+            return grant["actor_id"]
+        return None
     except Exception:
         # Missing/expired grants and unavailable Redis fail closed; never log secrets.
-        return False
+        return None
 
 
 def queue_manual_task(task, workflow: str, target: str, **kwargs):
     """Called only by protected manual HTTP handlers, never by task dispatchers."""
     require_ai_ready()
+    actor = _request_actor()
     intent = secrets.token_urlsafe(32)
     task_id = str(uuid.uuid4())
     grant = {"workflow": workflow, "target": target, "task_id": task_id,
+             "actor_id": actor, "intent": intent,
              "expires_at": time.time() + GRANT_TTL_SECONDS}
     grant_key = f"manual-ai:grant:{intent}"
     status_key = f"manual-ai:task:{task_id}"
@@ -74,7 +115,8 @@ def queue_manual_task(task, workflow: str, target: str, **kwargs):
         store = _store()
         store.set(grant_key, json.dumps(grant), ex=GRANT_TTL_SECONDS)
         store.set(status_key, json.dumps(grant), ex=STATUS_TTL_SECONDS)
-        return task.apply_async(kwargs={**kwargs, "manual_intent": intent}, task_id=task_id)
+        return task.apply_async(kwargs={**kwargs, "manual_intent": intent,
+                                        "manual_actor_id": actor}, task_id=task_id)
     except Exception:
         if store is not None:
             try:
@@ -85,11 +127,13 @@ def queue_manual_task(task, workflow: str, target: str, **kwargs):
 
 
 def task_status(task_id: str):
+    actor = _request_actor()
     from celery_app import app
     try:
         raw = _store().get(f"manual-ai:task:{task_id}")
         grant = json.loads(raw) if raw else None
-        if not grant:
+        if (not isinstance(grant, dict) or not _valid_actor(grant.get("actor_id"))
+                or grant["actor_id"] != actor or grant.get("task_id") != task_id):
             raise HTTPException(404, "Manual AI task not found")
         job = app.AsyncResult(task_id)
         state = job.state

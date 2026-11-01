@@ -29,10 +29,8 @@ Configure these values only in the backend's private runtime settings:
 - `FOUNDEROS_GOOGLE_CLIENT_ID` and `FOUNDEROS_GOOGLE_CLIENT_SECRET`
 - `FOUNDEROS_FRONTEND_ORIGIN`: the canonical HTTPS frontend origin
 - `FOUNDEROS_REDIRECT_URI`: that origin followed by `/api/auth/google/callback`
-- `FOUNDEROS_WORKSPACE_MODE`: an explicitly chosen `shared` or `private` policy.
-  Shared mode lets every signed-in user read and edit the same records. Private
-  mode requires an installed per-user data scope; it blocks business routes
-  until that scope is available. Missing or invalid mode also blocks access.
+- `FOUNDEROS_WORKSPACE_MODE=private`: every verified Google identity receives
+  a separate private workspace. Missing or invalid mode blocks access.
 
 Register that exact redirect URI in the Google web client. Apply `alembic
 upgrade head` after taking a database backup. Authentication migrations preserve
@@ -40,6 +38,24 @@ business records and never assign existing records to a new signup. Missing
 configuration, schema or sign-in fails closed;
 `/health` remains a minimal public health response. Existing business records
 are preserved. Google sign-in uses only basic identity scopes.
+
+Private workspaces use separate PostgreSQL schemas and restricted roles. Each
+business transaction selects the verified user's role and schema; the held
+legacy tables and other users' schemas remain inaccessible. Role and search-path
+selection reset at transaction end. Worker grants and task status also belong
+to one verified user. No client field selects a workspace or grants ownership.
+
+New accounts always start empty. After the final source freeze and backup, an
+operator can use `copy_legacy_to_verified_owner` with the independently verified
+Google subject to copy existing records to their owner's empty workspace. This
+is not an HTTP endpoint and never runs on ordinary signup. It preserves and
+verifies all original rows, keeps the held copy, and refuses a second adoption
+or overwriting a non-empty workspace.
+
+Back up the complete database, including all private schemas and the auth
+registry. A restore without cluster roles can reconstruct each exact restricted
+role from its validated registry entry. Future business-schema changes must
+migrate every workspace and advance `SCHEMA_REVISION`; mismatches fail closed.
 
 FounderOS is a versioned, evidence-backed estimate of demonstrated founder capabilities—not an AI personality score. It separates confidence, coverage, contradictions, and unknowns so investors can answer:
 

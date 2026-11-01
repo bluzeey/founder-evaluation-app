@@ -65,6 +65,18 @@ sessions = sa.Table(
     sa.Column("expires_at", sa.BigInteger, nullable=False, index=True),
     sa.Column("revoked_at", sa.BigInteger, nullable=True),
 )
+workspaces = sa.Table(
+    "owner_auth_workspaces", AUTH_METADATA,
+    sa.Column("user_id", sa.Integer,
+              sa.ForeignKey("owner_auth_identity.id", ondelete="RESTRICT"), primary_key=True),
+    sa.Column("schema_name", sa.String(63), nullable=False, unique=True),
+    sa.Column("schema_revision", sa.String(64), nullable=False),
+    sa.Column("created_at", sa.BigInteger, nullable=False),
+    sa.Column("legacy_copied", sa.Boolean, nullable=False, server_default=sa.false()),
+    sa.Index("uq_founderos_legacy_workspace", "legacy_copied", unique=True,
+             postgresql_where=sa.text("legacy_copied IS TRUE"),
+             sqlite_where=sa.text("legacy_copied IS 1")),
+)
 
 
 class _Unavailable(Exception):

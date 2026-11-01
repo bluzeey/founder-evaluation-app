@@ -10,21 +10,24 @@ from types import SimpleNamespace
 import pytest
 
 import ai_policy
+from workspace_context import current_user_id, user_scope
 
 
 @dataclass(frozen=True)
 class ManualRun:
     intent: str
     task_id: str
+    actor_id: int
 
     @property
     def stage_kwargs(self):
-        return {"manual_intent": self.intent, "manual_task_id": self.task_id}
+        return {"manual_intent": self.intent, "manual_task_id": self.task_id,
+                "manual_actor_id": self.actor_id}
 
     def run_task(self, task, *args, **kwargs):
         task.push_request(id=self.task_id)
         try:
-            return task.run(*args, **kwargs, manual_intent=self.intent)
+            return task.run(*args, **kwargs, manual_intent=self.intent, manual_actor_id=self.actor_id)
         finally:
             task.pop_request()
 
@@ -51,14 +54,16 @@ class ManualStore:
             self.expirations.pop(key, None)
 
     def issue(self, workflow, target):
-        run = ManualRun(secrets.token_urlsafe(32), str(uuid.uuid4()))
+        # Tests must explicitly establish a synthetic workspace, just like HTTP.
+        run = ManualRun(secrets.token_urlsafe(32), str(uuid.uuid4()), current_user_id())
         grant = {"workflow": workflow, "target": target, "task_id": run.task_id,
+                 "actor_id": run.actor_id, "intent": run.intent,
                  "expires_at": time.time() + ai_policy.GRANT_TTL_SECONDS}
         self.set(f"manual-ai:grant:{run.intent}", json.dumps(grant), ex=ai_policy.GRANT_TTL_SECONDS)
-        assert ai_policy.manual_allowed(run.intent, (workflow,), target, run.task_id)
-        assert not ai_policy.manual_allowed(run.intent, (workflow,), target, "unrelated-task")
-        assert not ai_policy.manual_allowed(run.intent, (workflow,), "unrelated-target", run.task_id)
-        assert not ai_policy.manual_allowed(run.intent, ("unrelated-workflow",), target, run.task_id)
+        assert ai_policy.manual_allowed(run.intent, (workflow,), target, run.task_id, run.actor_id) == run.actor_id
+        assert not ai_policy.manual_allowed(run.intent, (workflow,), target, "unrelated-task", run.actor_id)
+        assert not ai_policy.manual_allowed(run.intent, (workflow,), "unrelated-target", run.task_id, run.actor_id)
+        assert not ai_policy.manual_allowed(run.intent, ("unrelated-workflow",), target, run.task_id, run.actor_id)
         return run
 
 
@@ -67,14 +72,17 @@ def manual_store(monkeypatch):
     """Replace only Redis storage, never the policy predicate or HTTP owner guard."""
     store = ManualStore()
     monkeypatch.setattr(ai_policy, "_store", lambda: store)
-    return store
+    with user_scope(1):
+        yield store
 
 
 def assert_queued_grant(mock_send, response, workflow, target):
     mock_send.assert_called_once()
     call = mock_send.call_args.kwargs
     assert response["task_id"] == call["task_id"]
-    assert ai_policy.manual_allowed(call["kwargs"]["manual_intent"], (workflow,), target, call["task_id"])
+    actor = current_user_id()
+    assert call["kwargs"]["manual_actor_id"] == actor
+    assert ai_policy.manual_allowed(call["kwargs"]["manual_intent"], (workflow,), target, call["task_id"], actor) == actor
     return call
 
 

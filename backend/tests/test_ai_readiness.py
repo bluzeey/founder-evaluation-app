@@ -12,6 +12,7 @@ from starlette.requests import Request
 # Reuse the isolated real-route harness without changing parent-owned fixtures.
 from test_manual_ai import isolated, create_case, assert_quiet, clean_tables
 import ai_policy
+from workspace_context import user_scope
 
 KEY = "sk-or-synthetic-readiness-test"
 
@@ -74,17 +75,19 @@ def request(method="POST", owner=True):
     req = Request({"type": "http", "method": method})
     if owner:
         req.state.owner_email = "owner@example.test"
+        req.state.user_id = 1
     return req
 
 
 def test_no_key_rejects_manual_http_work_but_keeps_status_readable():
-    with pytest.raises(HTTPException) as raised:
-        asyncio.run(ai_policy.require_manual_ai(request()))
-    assert (raised.value.status_code, raised.value.detail) == (503, "AI setup pending")
-    asyncio.run(ai_policy.require_manual_ai(request("GET")))
-    with pytest.raises(HTTPException) as raised:
-        asyncio.run(ai_policy.require_manual_ai(request(owner=False)))
-    assert raised.value.status_code == 401
+    with user_scope(1):
+        with pytest.raises(HTTPException) as raised:
+            asyncio.run(ai_policy.require_manual_ai(request()))
+        assert (raised.value.status_code, raised.value.detail) == (503, "AI setup pending")
+        asyncio.run(ai_policy.require_manual_ai(request("GET")))
+        with pytest.raises(HTTPException) as raised:
+            asyncio.run(ai_policy.require_manual_ai(request(owner=False)))
+        assert raised.value.status_code == 401
 
 
 def test_readiness_does_not_alter_grant_matching_and_removed_key_blocks_workers(monkeypatch):
@@ -93,14 +96,15 @@ def test_readiness_does_not_alter_grant_matching_and_removed_key_blocks_workers(
     store = ManualStore()
     access = Mock(return_value=store)
     monkeypatch.setattr(ai_policy, "_store", access)
-    run = store.issue("enrich", "target")
-    assert ai_policy.manual_allowed(run.intent, ("enrich",), "target", run.task_id)
+    with user_scope(1):
+        run = store.issue("enrich", "target")
+    assert ai_policy.manual_allowed(run.intent, ("enrich",), "target", run.task_id, run.actor_id)
     monkeypatch.delenv("OPENROUTER_API_KEY")
     access.reset_mock()
-    assert not ai_policy.manual_allowed(run.intent, ("enrich",), "target", run.task_id)
+    assert not ai_policy.manual_allowed(run.intent, ("enrich",), "target", run.task_id, run.actor_id)
     access.assert_not_called()
     monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
-    assert ai_policy.manual_allowed(run.intent, ("enrich",), "target", run.task_id)
+    assert ai_policy.manual_allowed(run.intent, ("enrich",), "target", run.task_id, run.actor_id)
 
 
 @pytest.mark.parametrize("action", ["research", "source", "pool", "social", "estimate", "enrich", "document"])

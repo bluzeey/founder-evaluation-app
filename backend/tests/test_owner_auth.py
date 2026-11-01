@@ -35,6 +35,7 @@ EMAIL = "owner@example.test"
 BACKEND = Path(__file__).resolve().parents[1]
 LEGACY_MIGRATION = BACKEND / "alembic/versions/e7f8a9b0c1d2_add_owner_auth.py"
 MIGRATION = BACKEND / "alembic/versions/f8a9b0c1d2e3_public_google_identities.py"
+PUBLIC_AUTH_TABLES = (auth.owner, auth.oauth_states, auth.sessions)
 
 
 @pytest.fixture(autouse=True)
@@ -701,7 +702,9 @@ def test_public_migration_preserves_existing_auth_and_business_rows(monkeypatch)
     legacy, migration = revision_module(LEGACY_MIGRATION), revision_module()
     assert migration.down_revision == legacy.revision == "e7f8a9b0c1d2"
     config = Config(str(BACKEND / "alembic.ini"))
-    assert ScriptDirectory.from_config(config).get_heads() == [migration.revision]
+    scripts = ScriptDirectory.from_config(config)
+    assert scripts.get_heads() == ["92f61ac480db"]
+    assert scripts.get_revision("92f61ac480db").down_revision == migration.revision
     engine = sa.create_engine("sqlite://")
     with engine.begin() as connection:
         connection.exec_driver_sql("CREATE TABLE founders (id TEXT PRIMARY KEY, private_data TEXT)")
@@ -717,11 +720,11 @@ def test_public_migration_preserves_existing_auth_and_business_rows(monkeypatch)
             state_hash="b" * 64, browser_hash="c" * 64, nonce="d" * 43,
             pkce_verifier="e" * 43, expires_at=9999999999))
         original = {table.name: connection.execute(sa.select(table)).all()
-                    for table in auth.AUTH_METADATA.tables.values()}
+                    for table in PUBLIC_AUTH_TABLES}
         migration.upgrade()
         inspector = sa.inspect(connection)
-        assert set(inspector.get_table_names()) == {"founders", *auth.AUTH_METADATA.tables}
-        for table in auth.AUTH_METADATA.tables.values():
+        assert set(inspector.get_table_names()) == {"founders", *(table.name for table in PUBLIC_AUTH_TABLES)}
+        for table in PUBLIC_AUTH_TABLES:
             columns = inspector.get_columns(table.name)
             assert [(c["name"], c["nullable"]) for c in columns] == [(c.name, c.nullable) for c in table.columns]
             assert {i["name"] for i in inspector.get_indexes(table.name)} == {i.name for i in table.indexes}
@@ -732,7 +735,7 @@ def test_public_migration_preserves_existing_auth_and_business_rows(monkeypatch)
         # Round-trip the compatible singleton without deleting its session/state.
         migration.downgrade()
         migration.upgrade()
-        for table in auth.AUTH_METADATA.tables.values():
+        for table in PUBLIC_AUTH_TABLES:
             assert connection.execute(sa.select(table)).all() == original[table.name]
         connection.execute(auth.owner.insert().values(email=EMAIL, google_sub="new-sub", created_at=2))
         identities = connection.execute(sa.select(auth.owner).order_by(auth.owner.c.id)).mappings().all()
@@ -757,7 +760,7 @@ def test_public_migration_from_empty_applied_legacy_creates_no_default_identity(
         monkeypatch.setattr(migration, "op", operations)
         legacy.upgrade()
         migration.upgrade()
-        for table in auth.AUTH_METADATA.tables.values():
+        for table in PUBLIC_AUTH_TABLES:
             assert connection.execute(sa.select(sa.func.count()).select_from(table)).scalar_one() == 0
         connection.execute(auth.owner.insert().values(email=EMAIL, google_sub="any-first-sub", created_at=1))
         connection.execute(auth.owner.insert().values(email="next@example.test", google_sub="next-sub", created_at=1))

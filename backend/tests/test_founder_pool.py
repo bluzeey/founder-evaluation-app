@@ -12,7 +12,7 @@ from tasks.founder_pool import load_founder_pool, refresh_founder_pool, save_fou
 from manual_test_helpers import assert_queued_grant, manual_store, queued_task_result
 
 
-def test_save_and_load_pool():
+def test_save_and_load_pool(db):
     pool = [
         FounderPoolItem(
             id="pool_1",
@@ -98,7 +98,7 @@ def test_approve_pool_item_creates_founder(mock_agent_cls, client, manual_store)
     assert updated[0].status == PoolItemStatus.APPROVED
 
 
-def test_dismiss_pool_item(client):
+def test_dismiss_pool_item(client, db):
     save_founder_pool(
         [
             FounderPoolItem(
@@ -115,7 +115,7 @@ def test_dismiss_pool_item(client):
     assert updated[0].status == PoolItemStatus.DISMISSED
 
 
-def test_list_pool_endpoint(client):
+def test_list_pool_endpoint(client, db):
     save_founder_pool(
         [
             FounderPoolItem(
