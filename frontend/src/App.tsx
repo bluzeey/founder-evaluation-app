@@ -16,6 +16,7 @@ import Decisions from "@/pages/Decisions";
 import Thesis from "@/pages/Thesis";
 import Sourcing from "@/pages/Sourcing";
 import FounderImport from "@/pages/FounderImport";
+import { OwnerAccount } from "@/auth/OwnerAuthGate";
 
 const NAV = [
   { path: "/discovery", label: "Discovery", icon: Inbox },
@@ -68,7 +69,10 @@ function App() {
             <div className="text-xs font-mono uppercase tracking-widest text-concrete">
               {NAV.find((n) => location.pathname.startsWith(n.path))?.label || "Workspace"}
             </div>
-            <div className="text-xs text-concrete">Live backend data</div>
+            <div className="flex items-center gap-4">
+              <span className="hidden text-xs text-concrete md:inline">AI runs only when you request it</span>
+              <OwnerAccount />
+            </div>
           </header>
 
           <main className="flex-1 p-6 lg:p-8">

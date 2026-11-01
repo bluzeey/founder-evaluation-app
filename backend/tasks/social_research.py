@@ -4,9 +4,10 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from celery_app import app
+from workspace_context import user_scope
+from ai_policy import manual_allowed, skipped_manual_required
 from database import SessionLocal
 import crud
-from estimation import estimate_founder_scores
 from models import SocialMediaBackground
 from research import SocialAgent, create_social_background
 from scoring import calculate_founder_score
@@ -58,81 +59,90 @@ def research_social_background(
     linkedin_url: Optional[str],
     github_url: Optional[str],
     auto_score: bool = True,
+    manual_intent: Optional[str] = None,
+    manual_task_id: Optional[str] = None,
+    manual_actor_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Celery task that researches a founder's LinkedIn/GitHub footprint.
 
     Stores the SocialMediaBackground in the database and optionally recalculates the
     founder score from the extracted evidence.
     """
-    db = SessionLocal()
-    try:
-        pending_id = f"soc_{uuid.uuid4().hex[:8]}"
-        pending = SocialMediaBackground(
-            id=pending_id,
-            founder_id=founder_id,
-            status="running",
-            linkedin_url=linkedin_url,
-            github_url=github_url,
-        )
-        crud.create_social_background(db, pending)
-        logger.info("social_research.task.start founder_id=%s task_id=%s", founder_id, self.request.id)
-
+    # Broker deliveries authorize only the social workflow. The synchronous
+    # enrichment child uses its parent's grant and task id, never an override
+    # for a different broker delivery.
+    workflow = "social" if self.request.id else "enrich"
+    actor = manual_allowed(manual_intent, (workflow,), founder_id, self.request.id or manual_task_id, manual_actor_id)
+    if actor is None:
+        return skipped_manual_required(founder_id=founder_id)
+    with user_scope(actor):
+        db = SessionLocal()
         try:
-            agent = SocialAgent()
-            result = agent.research(
-                name=name,
-                linkedin_url=linkedin_url,
-                github_url=github_url,
-            )
-        except Exception as exc:
-            logger.error("social_research.task.error founder_id=%s error=%s", founder_id, exc)
-            failed = SocialMediaBackground(
+            pending_id = f"soc_{uuid.uuid4().hex[:8]}"
+            pending = SocialMediaBackground(
                 id=pending_id,
                 founder_id=founder_id,
-                status="failed",
+                status="running",
                 linkedin_url=linkedin_url,
                 github_url=github_url,
-                error_message=str(exc),
             )
-            crud.update_social_background(db, failed)
-            maybe_retry(self, exc, base_delay=SOCIAL_RESEARCH_RETRY_BASE_DELAY)
+            crud.create_social_background(db, pending)
+            logger.info("social_research.task.start founder_id=%s task_id=%s", founder_id, self.request.id)
 
-        background = create_social_background(
-            founder_id=founder_id,
-            result=result,
-            linkedin_url=linkedin_url,
-            github_url=github_url,
-            status="completed",
-        )
-        background.id = pending_id
+            try:
+                agent = SocialAgent()
+                result = agent.research(
+                    name=name,
+                    linkedin_url=linkedin_url,
+                    github_url=github_url,
+                )
+            except Exception as exc:
+                logger.error("social_research.task.error founder_id=%s error=%s", founder_id, exc)
+                failed = SocialMediaBackground(
+                    id=pending_id,
+                    founder_id=founder_id,
+                    status="failed",
+                    linkedin_url=linkedin_url,
+                    github_url=github_url,
+                    error_message=str(exc),
+                )
+                crud.update_social_background(db, failed)
+                maybe_retry(self, exc, base_delay=SOCIAL_RESEARCH_RETRY_BASE_DELAY)
 
-        # Optionally compute a score snapshot from the social evidence and update
-        # the founder + opportunity so the case reflects the new evidence.
-        if auto_score and background.evidence_items:
-            score_snapshot = calculate_founder_score(founder_id, background.evidence_items)
-            db_snapshot = crud.create_score_snapshot(db, score_snapshot)
-            crud.update_founder(db, founder_id, {"latest_score_snapshot_id": db_snapshot.id})
-            background.score_snapshot = score_snapshot
+            background = create_social_background(
+                founder_id=founder_id,
+                result=result,
+                linkedin_url=linkedin_url,
+                github_url=github_url,
+                status="completed",
+            )
+            background.id = pending_id
 
-            # Update any existing opportunity with the new score.
-            opps = crud.list_opportunities(db, founder_id=founder_id)
-            if opps:
-                for db_opp in opps:
-                    db_opp.founder_score = score_snapshot.founder_score
-                    db_opp.founder_confidence = score_snapshot.overall_confidence
-                db.commit()
+            # Optionally compute a score snapshot from the social evidence and update
+            # the founder + opportunity so the case reflects the new evidence.
+            if auto_score and background.evidence_items:
+                score_snapshot = calculate_founder_score(founder_id, background.evidence_items)
+                db_snapshot = crud.create_score_snapshot(db, score_snapshot)
+                crud.update_founder(db, founder_id, {"latest_score_snapshot_id": db_snapshot.id})
+                background.score_snapshot = score_snapshot
 
-            # Fill any remaining unknown/low-confidence dimensions with AI estimates.
-            estimate_founder_scores(founder_id, db=db)
+                # Update any existing opportunity with the new score.
+                opps = crud.list_opportunities(db, founder_id=founder_id)
+                if opps:
+                    for db_opp in opps:
+                        db_opp.founder_score = score_snapshot.founder_score
+                        db_opp.founder_confidence = score_snapshot.overall_confidence
+                    db.commit()
 
-        crud.update_social_background(db, background)
-        logger.info(
-            "social_research.task.end founder_id=%s status=%s evidence=%s scored=%s",
-            founder_id,
-            background.status,
-            len(background.evidence_items),
-            background.score_snapshot is not None,
-        )
-        return background.model_dump(mode="json")
-    finally:
-        db.close()
+
+            crud.update_social_background(db, background)
+            logger.info(
+                "social_research.task.end founder_id=%s status=%s evidence=%s scored=%s",
+                founder_id,
+                background.status,
+                len(background.evidence_items),
+                background.score_snapshot is not None,
+            )
+            return background.model_dump(mode="json")
+        finally:
+            db.close()

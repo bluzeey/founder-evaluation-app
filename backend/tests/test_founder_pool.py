@@ -2,23 +2,17 @@ import os
 from unittest.mock import patch
 
 import pytest
-from fastapi.testclient import TestClient
 
 os.environ["CELERY_ALWAYS_EAGER"] = "true"
 os.environ["OPENAI_API_KEY"] = "test-key"
 
-from main import app
 from models import FounderPoolItem, PoolItemStatus
 from research.sourcing_agent import SourcingAgent
 from tasks.founder_pool import load_founder_pool, refresh_founder_pool, save_founder_pool
+from manual_test_helpers import assert_queued_grant, manual_store, queued_task_result
 
 
-@pytest.fixture
-def client():
-    return TestClient(app)
-
-
-def test_save_and_load_pool():
+def test_save_and_load_pool(db):
     pool = [
         FounderPoolItem(
             id="pool_1",
@@ -35,7 +29,7 @@ def test_save_and_load_pool():
 
 
 @patch("tasks.founder_pool.SourcingAgent")
-def test_refresh_pool_adds_recommendations(mock_agent_cls):
+def test_refresh_pool_adds_recommendations(mock_agent_cls, manual_store):
     mock_agent = mock_agent_cls.return_value
     mock_agent.discover.return_value = {
         "recommendations": [
@@ -49,7 +43,8 @@ def test_refresh_pool_adds_recommendations(mock_agent_cls):
             }
         ]
     }
-    pool = refresh_founder_pool()
+    run = manual_store.issue("source", "pool")
+    pool = refresh_founder_pool(**run.stage_kwargs)
     assert len(pool) == 1
     assert pool[0].name == "Alice Smith"
     assert pool[0].status == PoolItemStatus.RECOMMENDED
@@ -57,18 +52,17 @@ def test_refresh_pool_adds_recommendations(mock_agent_cls):
     assert mock_agent.discover.call_args.kwargs["geographies"] == ["United States"]
 
 
-@patch("main.refresh_pool_task")
-def test_refresh_pool_endpoint_queues_task(mock_task, client):
-    mock_task.delay.return_value.id = "task_pool_123"
+@patch("main.refresh_pool_task.apply_async", side_effect=queued_task_result)
+def test_refresh_pool_endpoint_queues_task(mock_task, client, manual_store):
     response = client.post("/v1/founders/pool/refresh")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "queued"
-    assert data["task_id"] == "task_pool_123"
+    assert_queued_grant(mock_task, data, "source", "pool")
 
 
 @patch("tasks.founder_pool.SourcingAgent")
-def test_approve_pool_item_creates_founder(mock_agent_cls, client):
+def test_approve_pool_item_creates_founder(mock_agent_cls, client, manual_store):
     mock_agent = mock_agent_cls.return_value
     mock_agent.discover.return_value = {
         "recommendations": [
@@ -82,22 +76,29 @@ def test_approve_pool_item_creates_founder(mock_agent_cls, client):
             }
         ]
     }
-    refresh_founder_pool()
+    run = manual_store.issue("source", "pool")
+    refresh_founder_pool(**run.stage_kwargs)
     pool = load_founder_pool()
     item_id = pool[0].id
 
-    response = client.post(f"/v1/founders/pool/{item_id}/approve")
+    with patch("tasks.social_research.research_social_background.apply_async") as social, \
+         patch("tasks.estimation_task.run_estimate.apply_async") as estimate:
+        response = client.post(f"/v1/founders/pool/{item_id}/approve")
+    social.assert_not_called()
+    estimate.assert_not_called()
     assert response.status_code == 200
     data = response.json()
     assert data["founder"]["name"] == "Bob Builder"
     assert data["founder"]["linkedin_url"] == "https://linkedin.com/in/bob"
     assert data["opportunity_id"]
+    assert data["founder"]["enrichment_policy"] == "MANUAL"
+    assert data["founder"]["social_background_id"] is None
 
     updated = load_founder_pool()
     assert updated[0].status == PoolItemStatus.APPROVED
 
 
-def test_dismiss_pool_item(client):
+def test_dismiss_pool_item(client, db):
     save_founder_pool(
         [
             FounderPoolItem(
@@ -114,7 +115,7 @@ def test_dismiss_pool_item(client):
     assert updated[0].status == PoolItemStatus.DISMISSED
 
 
-def test_list_pool_endpoint(client):
+def test_list_pool_endpoint(client, db):
     save_founder_pool(
         [
             FounderPoolItem(
@@ -133,7 +134,7 @@ def test_list_pool_endpoint(client):
 
 
 @patch("tasks.founder_pool.SourcingAgent")
-def test_refresh_pool_skips_duplicates(mock_agent_cls):
+def test_refresh_pool_skips_duplicates(mock_agent_cls, manual_store):
     save_founder_pool(
         [
             FounderPoolItem(
@@ -156,7 +157,8 @@ def test_refresh_pool_skips_duplicates(mock_agent_cls):
             }
         ]
     }
-    pool = refresh_founder_pool()
+    run = manual_store.issue("source", "pool")
+    pool = refresh_founder_pool(**run.stage_kwargs)
     assert len(pool) == 1
     assert pool[0].id == "pool_existing"
 

@@ -13,6 +13,7 @@ from tasks.social_research import (
     store_social_background,
 )
 from models import Founder, SocialMediaBackground
+from manual_test_helpers import manual_store
 
 
 def _create_test_founder(db, founder_id="fnd_test"):
@@ -43,9 +44,8 @@ def test_store_and_load_social_background(db):
 
 
 @patch("tasks.social_research.SocialAgent")
-def test_research_social_background_task_runs_and_scores(mock_agent_cls, db):
+def test_research_social_background_task_runs_and_scores(mock_agent_cls, db, manual_store):
     _create_test_founder(db, "fnd_test")
-    from research.extractor import evidence_from_llm
 
     mock_agent = mock_agent_cls.return_value
     mock_agent.research.return_value = {
@@ -73,7 +73,8 @@ def test_research_social_background_task_runs_and_scores(mock_agent_cls, db):
         ],
     }
 
-    result = research_social_background.run(
+    run = manual_store.issue("social", "fnd_test")
+    result = run.run_task(research_social_background,
         founder_id="fnd_test",
         name="Jane Doe",
         email="jane@example.com",
@@ -82,6 +83,7 @@ def test_research_social_background_task_runs_and_scores(mock_agent_cls, db):
         auto_score=True,
     )
 
+    mock_agent.research.assert_called_once()
     assert result["status"] == "completed"
     assert result["score_snapshot"] is not None
     assert result["score_snapshot"]["founder_score"] > 0

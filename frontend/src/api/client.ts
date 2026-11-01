@@ -26,7 +26,9 @@ import type {
 } from "@/types/backend";
 import { cacheGet, invalidate, invalidateAll } from "@/api/cache";
 
-const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) || "/api";
+// Keep browser cookies and API requests on the frontend's own origin. Vercel
+// forwards /api to the protected Coolify backend; local Vite uses its proxy.
+const API_BASE = "/api";
 
 // Re-export cache invalidation helpers so callers (e.g. DealRoom) can
 // force a fresh read after a backend-side state change.
@@ -34,12 +36,17 @@ export const invalidateCache = invalidate;
 export const invalidateAllCache = invalidateAll;
 
 async function handleResponse<T>(response: Response): Promise<T> {
+  if (response.status === 401) {
+    invalidateAll();
+    if (typeof window !== "undefined") window.dispatchEvent(new Event("founderos:auth-expired"));
+    throw { status: 401, message: "Please sign in to continue." } as ApiError;
+  }
   const contentType = response.headers.get("content-type") || "";
   const isHtml = contentType.includes("text/html");
   if (!response.ok || isHtml) {
     let message: string;
     if (isHtml) {
-      message = "Backend returned HTML instead of JSON. Check that the backend is running and VITE_API_URL is set correctly.";
+      message = "The service is temporarily unavailable. Please retry.";
     } else {
       message = `Request failed with status ${response.status}`;
       try {

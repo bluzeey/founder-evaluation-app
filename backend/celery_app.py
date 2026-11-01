@@ -12,14 +12,6 @@ logger = logging.getLogger(__name__)
 REDIS_BROKER = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
 REDIS_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
 
-DISPATCH_INTERVAL_SECONDS = float(
-    os.environ.get("SOURCING_DISPATCH_INTERVAL_SECONDS", "60")
-)
-
-ENRICHMENT_DISPATCH_INTERVAL_SECONDS = float(
-    os.environ.get("ENRICHMENT_DISPATCH_INTERVAL_SECONDS", "180")
-)
-
 app = Celery("founderos", broker=REDIS_BROKER, backend=REDIS_BACKEND)
 
 app.conf.update(
@@ -30,13 +22,7 @@ app.conf.update(
     enable_utc=True,
     task_track_started=True,
     task_always_eager=os.environ.get("CELERY_ALWAYS_EAGER", "false").lower() == "true",
-    beat_schedule={
-        "dispatch-sourcing-jobs": {
-            "task": "tasks.founder_pool.dispatch_sourcing_jobs",
-            "schedule": DISPATCH_INTERVAL_SECONDS,
-            "args": (),
-        },
-    },
+    beat_schedule={},
 )
 
 app.conf.imports = (
@@ -48,10 +34,8 @@ app.conf.imports = (
 )
 
 logger.info(
-    "celery_app.configured broker=%s backend=%s dispatch_interval_seconds=%s enrichment_dispatch_seconds=%s always_eager=%s",
-    REDIS_BROKER,
-    REDIS_BACKEND,
-    DISPATCH_INTERVAL_SECONDS,
-    ENRICHMENT_DISPATCH_INTERVAL_SECONDS,
+    "celery_app.configured broker_configured=%s backend_configured=%s ai_mode=manual beat_enabled=false always_eager=%s",
+    bool(REDIS_BROKER),
+    bool(REDIS_BACKEND),
     app.conf.task_always_eager,
 )

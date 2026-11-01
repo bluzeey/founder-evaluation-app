@@ -1,20 +1,14 @@
 import os
-from datetime import datetime, timezone
 from io import BytesIO
 from unittest.mock import patch
 
-import pytest
-from fastapi.testclient import TestClient
+from manual_test_helpers import assert_queued_grant, local_task_delivery, manual_store
+from tasks.document_extraction import extract_document
+
 
 os.environ["CELERY_ALWAYS_EAGER"] = "true"
 os.environ["OPENAI_API_KEY"] = "test-key"
 
-from main import app
-
-
-@pytest.fixture
-def client():
-    return TestClient(app)
 
 
 def _create_thesis(client):
@@ -50,7 +44,7 @@ def _create_founder_and_opportunity(client):
 
 
 @patch("tasks.document_extraction.DocumentAgent")
-def test_upload_deck_extracts_claims_and_evidence(mock_agent_cls, client):
+def test_manual_deck_extraction_adds_claims_and_evidence(mock_agent_cls, client, manual_store):
     mock_agent = mock_agent_cls.return_value
     mock_agent.extract.return_value = {
         "profile": {"name": "Deck Founder", "current_company": "DeckCo"},
@@ -88,11 +82,14 @@ def test_upload_deck_extracts_claims_and_evidence(mock_agent_cls, client):
 
     founder_id, opp_id = _create_founder_and_opportunity(client)
 
-    response = client.post(
-        f"/v1/opportunities/{opp_id}/deck?founder_id={founder_id}",
-        files={"file": ("deck.txt", BytesIO(b"This is a pitch deck."), "text/plain")},
-    )
+    with local_task_delivery(extract_document) as send:
+        response = client.post(
+            f"/v1/opportunities/{opp_id}/deck/extract?founder_id={founder_id}",
+            files={"file": ("deck.txt", BytesIO(b"This is a pitch deck."), "text/plain")},
+        )
     assert response.status_code == 200
+    assert_queued_grant(send, response.json(), "document", opp_id)
+    mock_agent.extract.assert_called_once()
     data = response.json()
     assert data["opportunity_id"] == opp_id
     assert data["founder_id"] == founder_id
@@ -117,13 +114,8 @@ def test_upload_deck_rejects_unknown_file_type(client):
         f"/v1/opportunities/{opp_id}/deck",
         files={"file": ("deck.exe", BytesIO(b"binary"), "application/octet-stream")},
     )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "queued"
-
-    # In eager mode the task will run and fail with unsupported type.
-    # We can inspect the task result by tracking the call, but for now the endpoint
-    # itself accepts the upload and returns queued.
+    assert response.status_code == 400
+    assert "Supported files" in response.json()["detail"]
 
 
 def test_upload_deck_requires_existing_opportunity(client):
@@ -132,3 +124,21 @@ def test_upload_deck_requires_existing_opportunity(client):
         files={"file": ("deck.txt", BytesIO(b"text"), "text/plain")},
     )
     assert response.status_code == 404
+
+
+@patch("tasks.document_extraction.DocumentAgent")
+@patch("main.extract_document.apply_async")
+def test_ordinary_upload_preserves_text_without_ai(mock_send, mock_agent, client):
+    founder_id, opp_id = _create_founder_and_opportunity(client)
+    text = "Ordinary document text with founder claims."
+    response = client.post(
+        f"/v1/opportunities/{opp_id}/deck?founder_id={founder_id}",
+        files={"file": ("deck.txt", BytesIO(text.encode()), "text/plain")},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "saved"
+    assert response.json()["task_id"] is None
+    claims = client.get(f"/v1/opportunities/{opp_id}/diligence").json()
+    assert [claim["claim"] for claim in claims] == [text]
+    mock_send.assert_not_called()
+    mock_agent.assert_not_called()

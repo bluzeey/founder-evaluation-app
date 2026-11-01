@@ -47,6 +47,7 @@ function ttlFor(path: string): TtlConfig {
 }
 
 const store = new Map<string, CacheEntry>();
+let generation = 0;
 
 /**
  * Fetch with cache. Returns cached data immediately when fresh; returns
@@ -55,6 +56,7 @@ const store = new Map<string, CacheEntry>();
  * request (deduplication).
  */
 export function cacheGet<T>(fetcher: () => Promise<T>, key: string): Promise<T> {
+  const requestGeneration = generation;
   const now = Date.now();
   const entry = store.get(key);
   const ttl = ttlFor(key);
@@ -82,6 +84,7 @@ export function cacheGet<T>(fetcher: () => Promise<T>, key: string): Promise<T> 
   // Miss (or fully expired): fetch fresh, dedupe future concurrent callers.
   const inflight = fetcher()
     .then((data) => {
+      if (requestGeneration !== generation) return data;
       const e = store.get(key);
       if (e) {
         e.data = data;
@@ -138,6 +141,7 @@ export function invalidate(prefix: string): void {
 }
 
 export function invalidateAll(): void {
+  generation += 1;
   store.clear();
 }
 

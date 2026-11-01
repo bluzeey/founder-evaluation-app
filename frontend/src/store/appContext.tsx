@@ -18,8 +18,6 @@ export type AppState = {
   thesisError: string | null;
 };
 
-const STORAGE_KEY = "vc-brain-demo-state-v2";
-
 const defaultState: AppState = {
   caseOverrides: {},
   theses: [],
@@ -39,11 +37,9 @@ const AppContext = createContext<{
 } | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<AppState>(() => loadState());
-
-  useEffect(() => {
-    saveState(state);
-  }, [state]);
+  // Private workspace data is fetched after OwnerAuthGate verifies the session
+  // and stays in the mounted workspace rather than browser storage.
+  const [state, setState] = useState<AppState>(defaultState);
 
   const activeThesis = useMemo(
     () => state.theses.find((t) => t.id === state.activeThesisId) || null,
@@ -124,23 +120,4 @@ export function useApp() {
   const ctx = useContext(AppContext);
   if (!ctx) throw new Error("useApp must be used inside AppProvider");
   return ctx;
-}
-
-function loadState(): AppState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultState;
-    const parsed = JSON.parse(raw) as AppState;
-    return { ...defaultState, ...parsed };
-  } catch {
-    return defaultState;
-  }
-}
-
-function saveState(state: AppState) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch {
-    // ignore storage errors
-  }
 }

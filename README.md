@@ -2,6 +2,61 @@
 
 **Evidence-first founder intelligence for early-stage investors.**
 
+## Google sign-in and manual AI
+
+The workspace accepts any verified Google account. Each identity is keyed by
+Google's stable subject, never by an email allowlist or a shared access key.
+The backend verifies both the Google identity and a server-side session before
+serving records or accepting changes. The browser never stores an API key or
+Google token. Sign-out revokes the session and clears cached workspace data.
+
+AI runs only after an explicit manual request. Opening pages, importing or
+saving founders, approving pool records, and uploading deck text do not start
+research or estimation. The Run AI controls show progress and errors. Periodic
+AI dispatch is disabled; legacy dispatch messages are inert. A worker processes
+only explicitly authorized manual workflows. Do not run a beat scheduler.
+
+### Vercel and Coolify
+
+Vercel forwards same-origin `/api/*` requests to the protected Coolify backend.
+The client uses `/api` directly, including for Google login, so the existing
+Vercel address supports secure HTTP-only session cookies. `VITE_API_URL` no
+longer selects the production backend. API and authentication responses must
+remain private and uncached.
+
+Configure these values only in the backend's private runtime settings:
+
+- `FOUNDEROS_GOOGLE_CLIENT_ID` and `FOUNDEROS_GOOGLE_CLIENT_SECRET`
+- `FOUNDEROS_FRONTEND_ORIGIN`: the canonical HTTPS frontend origin
+- `FOUNDEROS_REDIRECT_URI`: that origin followed by `/api/auth/google/callback`
+- `FOUNDEROS_WORKSPACE_MODE=private`: every verified Google identity receives
+  a separate private workspace. Missing or invalid mode blocks access.
+
+Register that exact redirect URI in the Google web client. Apply `alembic
+upgrade head` after taking a database backup. Authentication migrations preserve
+business records and never assign existing records to a new signup. Missing
+configuration, schema or sign-in fails closed;
+`/health` remains a minimal public health response. Existing business records
+are preserved. Google sign-in uses only basic identity scopes.
+
+Private workspaces use separate PostgreSQL schemas and restricted roles. Each
+business transaction selects the verified user's role and schema; the held
+legacy tables and other users' schemas remain inaccessible. Role and search-path
+selection reset at transaction end. Worker grants and task status also belong
+to one verified user. No client field selects a workspace or grants ownership.
+
+New accounts always start empty. After the final source freeze and backup, an
+operator can use `copy_legacy_to_verified_owner` with the independently verified
+Google subject to copy existing records to their owner's empty workspace. This
+is not an HTTP endpoint and never runs on ordinary signup. It preserves and
+verifies all original rows, keeps the held copy, and refuses a second adoption
+or overwriting a non-empty workspace.
+
+Back up the complete database, including all private schemas and the auth
+registry. A restore without cluster roles can reconstruct each exact restricted
+role from its validated registry entry. Future business-schema changes must
+migrate every workspace and advance `SCHEMA_REVISION`; mismatches fail closed.
+
 FounderOS is a versioned, evidence-backed estimate of demonstrated founder capabilities—not an AI personality score. It separates confidence, coverage, contradictions, and unknowns so investors can answer:
 
 - What has this founder demonstrated?
@@ -41,7 +96,7 @@ founder-evaluation-app/
 │   ├── src/
 │   ├── vercel.json
 │   └── package.json
-├── backend/           # FastAPI + Pydantic + deterministic engine → Railway
+├── backend/           # FastAPI + Pydantic + deterministic engine → Coolify
 │   ├── main.py
 │   ├── scoring.py
 │   ├── models.py
@@ -60,7 +115,7 @@ founder-evaluation-app/
 
 - **Frontend:** Desktop-first investor interface and mobile-friendly founder assessment workspace.
 - **Backend:** FastAPI application that owns data models, evidence normalization, deterministic scoring, and workflow endpoints.
-- **AI layer:** Agents for ingestion, gap planning, assessment conduction, independent grading, diligence validation, and memo generation. Model calls are routed through environment variables and use **OpenAI** (`gpt-5`) with **Tavily** for real-time web search. The deterministic score calculation itself lives in Python code, not in an LLM.
+- **AI layer:** Explicit manual workflows use **OpenRouter** (`openai/gpt-5` by default) with **Tavily** for web search. The deterministic score calculation itself lives in Python code, not in an LLM.
 - **Memory layer:** Founder Score persists across ventures; opportunity axes (Founder-Market Fit, Team Completeness, Market, Idea-vs-Market) are contextual.
 
 ## Founder Score outputs
@@ -124,54 +179,55 @@ pytest tests/ -v
 
 ## Deployment
 
-- **Frontend on Vercel:** Deploy the `frontend/` directory. Set `VITE_API_URL` to your Railway backend URL.
-- **Backend on Railway:** Deploy the `backend/` directory. Configuration is in `backend/railway.toml` and `backend/Procfile`.
+- **Frontend on Vercel:** Deploy the `frontend/` directory with its `/api` rewrite. API requests use the frontend's own origin.
+- **Backend on Coolify:** Deploy the `backend/` directory. The retained Railway configuration files document the original process commands.
   - Add a PostgreSQL database service and set `DATABASE_URL`.
   - Add a Redis service and set `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND`.
   - The web start command runs `alembic upgrade head` before starting the server.
-  - Run a Celery beat service (`celery -A celery_app beat -l info`) and a worker service (`celery -A celery_app worker -l info`) for background tasks.
+  - Run a worker service (`celery -A celery_app worker -l info`) for explicitly requested AI jobs. Keep Celery beat stopped.
 
-## Deck upload and sourcing automation
+## Deck uploads and manual sourcing
 
-- **Deck upload:** `POST /v1/opportunities/{id}/deck` accepts a PDF, DOCX, TXT, or MD file. The file is **not stored**; its text is extracted and sent to the AI model. Extracted claims are saved to the opportunity, and extracted evidence is saved to the founder's score ledger.
-- **Sourcing schedules:** `POST /v1/sourcing/schedules` attaches a repeating interval to a thesis. The Celery beat dispatcher checks every minute and queues a sourcing job for any due schedule.
+- **Deck upload:** `POST /v1/opportunities/{id}/deck` saves parsed text without a provider call. Optional **Run AI deck extraction** uses the separate `/deck/extract` endpoint to queue the requested extraction workflow.
+- **Saved sourcing settings:** source configurations remain attached to theses. Legacy interval and enabled fields are retained for compatibility but cannot schedule AI work.
 - **Manual sourcing:** `POST /v1/theses/{id}/source-now` triggers a one-time sourcing job immediately.
 - **Job history:** `GET /v1/sourcing/jobs` returns the list of sourcing runs with counts of leads found, added, and skipped.
 
 ## Founder enrichment
 
-The sourcing loop finds new leads, but a separate recurring pipeline deepens data on each existing founder so confidence does not stay at 0. **Sourcing and enrichment are sequenced, not parallel:** automatic sourcing is paused while any founder is still awaiting its enrichment pass, and resumes only once every founder has been enriched once.
+Enrichment is optional and manual. Low confidence, a new founder, a page load,
+an import, or a saved source configuration never starts it. The former sourcing
+and enrichment dispatch tasks return without scheduling work. Old provider
+messages without a fresh grant for their exact workflow, target and task ID are
+also skipped. Status polling never starts or retries a workflow.
 
-- **Enrich-once rule:** each founder is enriched exactly once. The dispatcher only picks founders that have never completed an enrichment pass (`enrichment_attempts == 0`) and are below `ENRICHMENT_CONFIDENCE_THRESHOLD` (default 0.30). After one pass, the founder never re-enters the queue.
-- **Sourcing gate:** the automatic beat dispatcher (`dispatch_sourcing_jobs`) checks `count_founders_blocking_sourcing` on every tick. If any founder is below 0.30 confidence AND has not yet been enriched once, sourcing is skipped for that tick (`skipped_reason: enrichment_pending`). Sourcing resumes once the queue is drained. In-flight enrichments keep blocking until the chain completes and increments `enrichment_attempts`.
-- **Manual overrides:** `POST /v1/founders/pool/refresh` and `POST /v1/theses/{id}/source-now` are explicit user actions and are NOT gated — you can always force a sourcing pass manually.
-- **Dispatcher:** Celery beat runs `dispatch_enrichment_jobs` every `ENRICHMENT_DISPATCH_INTERVAL_SECONDS` (default 180s). It selects up to `ENRICHMENT_MAX_FOUNDERS_PER_RUN` (default 5) founders per tick, debounced by `ENRICHMENT_MIN_GAP_SECONDS` (default 600s) so an in-flight founder isn't re-queued.
+- **Manual sourcing:** `POST /v1/founders/pool/refresh` and `POST /v1/theses/{id}/source-now` require a signed-in Google session. Sourcing does not automatically start social research or estimation for each result.
 - **3-stage chain:** for each candidate, `POST /v1/founders/{id}/enrich` queues `enrich_founder_chain`, which runs sequentially:
   1. **Social** — re-runs LinkedIn/GitHub background research (skipped if no links).
-  2. **Deep web** — OpenAI + Tavily research across `news`, `company_blog`, `twitter`; persists `ai_research_summary` + sources and adds evidence.
+  2. **Deep web** — OpenRouter + Tavily research across `news`, `company_blog`, `twitter`; persists `ai_research_summary` + sources and adds evidence.
   3. **Estimate** — derives one evidence item per dimension from all available context and re-scores.
   Each stage records an `EnrichmentRun` row with `confidence_before`/`confidence_after`; `enrichment_attempts` is incremented when the chain finishes.
 - **Observability:** `GET /v1/enrichment/runs?founder_id=…` lists recent runs; `GET /v1/enrichment/status` returns the count of founders below threshold and the last dispatch time.
 
 ## AI configuration
 
-Set environment variables on Railway:
+AI remains inactive until `OPENROUTER_API_KEY` is added to the backend and worker
+runtime settings. Buttons show **AI setup pending** while setup is missing;
+manual POST requests also fail before queueing or web search. Existing OpenAI
+or UMANS credentials are never used as a fallback. `/v1/ai/config` reports local
+readiness behind sign-in, without contacting a provider or revealing secrets.
+
+Set provider values only in the backend and worker runtime settings:
 
 ```env
 DATABASE_URL=postgresql://postgres:password@localhost:5432/founderos
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
 
-# Use a Wallet key for deployed/production backends. Personal Plan keys are
-# throttled and deprioritized for unattended automation.
-UMANS_API_KEY=sk-your-umans-api-key
-
-OPENAI_API_KEY=sk-your-openai-api-key
-# gpt-4o is deprecated; use gpt-5.
-OPENAI_MODEL=gpt-5
-OPENAI_SOURCING_MODEL=gpt-5
-OPENAI_SOCIAL_MODEL=gpt-5
-OPENAI_DOCUMENT_MODEL=gpt-5
+OPENROUTER_API_KEY=your-openrouter-key
+OPENROUTER_MODEL=openai/gpt-5
+OPENROUTER_TIMEOUT=60
+OPENROUTER_MAX_TOKENS=8000
 
 # Tavily configuration
 TAVILY_API_KEY=tvly-your-tavily-api-key
@@ -192,28 +248,21 @@ API_LOCK_TTL_SECONDS=120
 CIRCUIT_BREAKER_FAILURE_THRESHOLD=3
 CIRCUIT_BREAKER_COOLDOWN_SECONDS=600
 
-SOURCING_DISPATCH_INTERVAL_SECONDS=60
 POOL_LOCK_TTL_SECONDS=300
 
-# Enrichment pipeline: a recurring Celery beat task gathers more data around
-# each founder (social research → deep web research → AI estimate) so founders
-# do not sit at 0% confidence. Only founders below the threshold are enriched,
-# debounced per founder.
-ENRICHMENT_DISPATCH_INTERVAL_SECONDS=180
+# Used by the explicitly requested enrichment workflow, not a schedule.
 ENRICHMENT_CONFIDENCE_THRESHOLD=0.30
-ENRICHMENT_MIN_GAP_SECONDS=600
-ENRICHMENT_MAX_FOUNDERS_PER_RUN=5
 ```
 
 The deterministic score engine does not call an LLM; only the evidence extraction, grading, and memo agents do.
 
 ### Avoiding API rate limits in production
 
-1. **Use Tavily for web search**: Real-time search is handled by `TAVILY_API_KEY`, so OpenAI only does reasoning. This removes provider-specific web-search overload errors.
-2. **Serialize calls**: `API_LOCK_*` settings ensure only one OpenAI request is in flight at a time across sourcing, social research, and document extraction.
+1. **Use Tavily for web search**: Real-time search is handled by `TAVILY_API_KEY`, so model requests through OpenRouter handle reasoning.
+2. **Serialize calls**: `API_LOCK_*` settings ensure only one model request is in flight at a time across sourcing, social research, and document extraction.
 3. **Disable web search where it is not needed**: `OPENAI_ENABLE_WEB_SEARCH_SOCIAL=false` avoids redundant searches when LinkedIn/GitHub URLs are already provided.
-4. **Use the circuit breaker**: After `CIRCUIT_BREAKER_FAILURE_THRESHOLD` consecutive retryable failures, all new OpenAI calls are rejected for `CIRCUIT_BREAKER_COOLDOWN_SECONDS` to stop retry storms.
-5. **Slow down retries**: Increase `MIN_RETRY_DELAY_SECONDS` and `*_RETRY_BASE_DELAY` if OpenAI keeps returning 429s.
+4. **Use the circuit breaker**: After `CIRCUIT_BREAKER_FAILURE_THRESHOLD` consecutive retryable failures, new model calls are rejected for `CIRCUIT_BREAKER_COOLDOWN_SECONDS` to stop retry storms.
+5. **Slow down retries**: Increase `MIN_RETRY_DELAY_SECONDS` and `*_RETRY_BASE_DELAY` if the provider keeps returning 429s.
 
 ## Hackathon demonstrator flow
 

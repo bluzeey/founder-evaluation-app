@@ -2,17 +2,12 @@ import os
 from unittest.mock import patch
 
 import pytest
-from fastapi.testclient import TestClient
+from manual_test_helpers import assert_queued_grant, local_task_delivery, manual_store
+from tasks.founder_pool import refresh_pool_task
 
 os.environ["CELERY_ALWAYS_EAGER"] = "true"
 os.environ["OPENAI_API_KEY"] = "test-key"
 
-from main import app
-
-
-@pytest.fixture
-def client():
-    return TestClient(app)
 
 
 @pytest.fixture
@@ -44,7 +39,7 @@ def test_create_and_list_sourcing_schedule(client, thesis):
     data = r.json()
     assert data["thesis_id"] == thesis["id"]
     assert data["interval_seconds"] == 1800
-    assert data["enabled"] is True
+    assert data["enabled"] is False
 
     r = client.get("/v1/sourcing/schedules")
     assert r.status_code == 200
@@ -90,7 +85,7 @@ def test_update_and_delete_sourcing_schedule(client, thesis):
 
 
 @patch("tasks.founder_pool.SourcingAgent")
-def test_source_now_creates_job(mock_agent_cls, client, thesis):
+def test_source_now_creates_job(mock_agent_cls, client, thesis, manual_store):
     mock_agent = mock_agent_cls.return_value
     mock_agent.discover.return_value = {
         "recommendations": [
@@ -103,14 +98,17 @@ def test_source_now_creates_job(mock_agent_cls, client, thesis):
         ]
     }
 
-    r = client.post(f"/v1/theses/{thesis['id']}/source-now")
+    with local_task_delivery(refresh_pool_task) as send:
+        r = client.post(f"/v1/theses/{thesis['id']}/source-now")
     assert r.status_code == 200
     data = r.json()
     assert data["thesis_id"] == thesis["id"]
     assert data["status"] == "queued"
     assert data["job_id"]
+    assert_queued_grant(send, data, "source", thesis["id"])
+    mock_agent.discover.assert_called_once()
 
-    # Job should be listed and completed in eager mode.
+    # The explicit API-issued task was delivered locally, without a broker.
     r = client.get("/v1/sourcing/jobs")
     assert r.status_code == 200
     jobs = r.json()
@@ -124,7 +122,7 @@ def test_source_now_creates_job(mock_agent_cls, client, thesis):
     assert any(p["name"] == "Sourced Founder" for p in pool)
 
 
-def test_dispatch_sourcing_jobs_respects_due_time(client, thesis):
+def test_dispatch_sourcing_jobs_stays_inert_even_when_due(client, thesis, db):
     # Create a schedule with a far-future next_run_at so it is not due.
     r = client.post(
         "/v1/sourcing/schedules",
@@ -150,24 +148,35 @@ def test_dispatch_sourcing_jobs_respects_due_time(client, thesis):
     result = dispatch_sourcing_jobs.run()
     assert result["dispatched"] == []
 
-    # Set next_run_at in the past.
+    # Simulate an old enabled, overdue schedule retained from before manual mode.
     db = SessionLocal()
     crud.update_sourcing_schedule(
         db,
         schedule_id,
-        {"next_run_at": datetime.now(timezone.utc) - timedelta(minutes=1)},
+        {"enabled": True, "next_run_at": datetime.now(timezone.utc) - timedelta(minutes=1)},
     )
     db.close()
 
-    with patch("tasks.founder_pool.SourcingAgent") as mock_agent_cls:
-        mock_agent = mock_agent_cls.return_value
-        mock_agent.discover.return_value = {"recommendations": []}
-        result = dispatch_sourcing_jobs.run()
-        assert len(result["dispatched"]) == 1
-        assert result["dispatched"][0]["thesis_id"] == thesis["id"]
+    with patch("tasks.founder_pool.SourcingAgent") as provider, \
+         patch("tasks.founder_pool.refresh_pool_task") as refresh, \
+         patch("tasks.founder_pool.SessionLocal") as session:
+        for _ in range(3):
+            result = dispatch_sourcing_jobs.run()
+            assert result["status"] == "skipped_manual_required"
+            assert result["dispatched"] == []
+        provider.assert_not_called()
+        refresh.delay.assert_not_called()
+        refresh.apply_async.assert_not_called()
+        session.assert_not_called()
 
     r = client.get("/v1/sourcing/jobs")
-    assert len(r.json()) >= 1
+    assert r.status_code == 200
+    assert r.json() == []
+    with SessionLocal() as db:
+        unchanged = crud.get_sourcing_schedule(db, schedule_id)
+        assert unchanged.enabled is True
+        assert unchanged.last_run_at is None
+        assert unchanged.next_run_at < datetime.now(timezone.utc)
 
 
 def test_seed_creates_default_sourcing_schedule(client):
@@ -195,3 +204,5 @@ def test_sourcing_status_endpoint(client, thesis):
     assert "active_jobs" in data
     assert "recent_jobs" in data
     assert len(data["schedules"]) >= 1
+    assert data["scheduler_enabled"] is False
+    assert data["ai_mode"] == "manual"

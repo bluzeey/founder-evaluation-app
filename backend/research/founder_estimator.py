@@ -1,21 +1,9 @@
-import json
-import logging
-import os
-import re
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
-import httpx
-
-from models import Claim, EvidenceItem, EvidenceStatus, EvidenceType, Founder
-from .api_lock import api_lock
+from models import Claim, EvidenceItem, Founder
 from .extractor import evidence_from_llm
-from .http_utils import raise_for_status
-
-logger = logging.getLogger(__name__)
-
-OPENAI_BASE_URL = os.environ.get(
-    "OPENAI_BASE_URL", "https://api.openai.com/v1/chat/completions"
-)
+from .http_utils import chat_completion, parse_completion
+from .openrouter_config import get_api_key, load_config
 
 _ESTIMATE_SYSTEM_PROMPT = """You are a rigorous founder-diligence estimator.
 
@@ -80,13 +68,12 @@ class AIFounderEstimator:
         model: Optional[str] = None,
         timeout: Optional[float] = None,
     ):
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
-        if not self.api_key:
-            raise RuntimeError("OPENAI_API_KEY is not set")
-
-        self.model = model or os.environ.get("OPENAI_ESTIMATE_MODEL", "gpt-5")
-        self.timeout = float(timeout or os.environ.get("OPENAI_TIMEOUT", "60"))
-        self.max_tokens = int(os.environ.get("OPENAI_MAX_TOKENS", "4000"))
+        self._api_key_override = api_key
+        config = load_config(api_key, model, timeout, default_timeout=60, default_max_tokens=4000)
+        self.api_key = config.api_key
+        self.model = config.model
+        self.timeout = config.timeout
+        self.max_tokens = config.max_tokens
 
     def estimate(
         self,
@@ -97,6 +84,7 @@ class AIFounderEstimator:
         claims: Optional[List[Claim]] = None,
     ) -> List[EvidenceItem]:
         """Return inferred evidence items for each dimension based on available context."""
+        self.api_key = get_api_key(self._api_key_override)
         context_parts = []
         if source_reason:
             context_parts.append(f"Sourcing reason: {source_reason}")
@@ -112,7 +100,6 @@ class AIFounderEstimator:
                 context_parts.append(claim_text)
 
         if not context_parts:
-            logger.info("estimator.no_context founder_id=%s", founder.id)
             return []
 
         user_message = (
@@ -132,17 +119,7 @@ class AIFounderEstimator:
             "max_completion_tokens": self.max_tokens,
         }
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-
-        logger.info("estimator.request.start founder_id=%s model=%s", founder.id, self.model)
-        with httpx.Client(timeout=self.timeout) as client:
-            with api_lock():
-                response = client.post(OPENAI_BASE_URL, headers=headers, json=payload)
-            raise_for_status(response)
-            data = response.json()
+        data = chat_completion(payload, api_key=self.api_key, timeout=self.timeout)
 
         parsed = self._parse_response(data)
         raw_evidence = parsed.get("evidence", []) or []
@@ -155,35 +132,7 @@ class AIFounderEstimator:
             item.setdefault("evidence_type", "inferred_estimate")
             item.setdefault("independence_group", "ai_estimate")
             evidence_items.append(evidence_from_llm(founder.id, item))
-        logger.info(
-            "estimator.request.end founder_id=%s items=%s",
-            founder.id,
-            len(evidence_items),
-        )
         return evidence_items
 
     def _parse_response(self, data: dict[str, Any]) -> dict[str, Any]:
-        try:
-            choice = data["choices"][0]
-        except (KeyError, IndexError) as exc:
-            logger.error("estimator.unexpected_response data=%s", data)
-            raise ValueError(f"Unexpected OpenAI response shape: {data}") from exc
-
-        message = choice.get("message", {})
-        content = message.get("content", "")
-        content = content.strip()
-
-        if content.startswith("```"):
-            content = re.sub(r"^```(?:json)?\s*", "", content, flags=re.IGNORECASE)
-            content = re.sub(r"\s*```$", "", content)
-            content = content.strip()
-
-        if not content:
-            logger.error("estimator.empty_content")
-            raise ValueError("OpenAI response contained no content")
-
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError as exc:
-            logger.error("estimator.invalid_json content=%s", content)
-            raise ValueError(f"OpenAI response was not valid JSON:\n{content}") from exc
+        return parse_completion(data)
